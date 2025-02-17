@@ -1,0 +1,4 @@
+[formatter.racket]
+command = "raco"
+options = ["fmt", "-i"]
+includes = ["*.rkt"]
