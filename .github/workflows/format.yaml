@@ -25,9 +25,8 @@ jobs:
           variant: "CS"
           version: "8.9"
 
-      - name: Install treefmt and formatters
-        run: |
-          raco pkg install fmt
+      - name: Install fmt
+        run: raco pkg install -D --deps search-auto fmt
 
       - name: Format
         run: treefmt
