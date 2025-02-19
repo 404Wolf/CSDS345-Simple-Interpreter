@@ -23,6 +23,7 @@
           packages = with pkgs; [
             racket
             treefmt
+            pre-commit
           ];
         };
       };

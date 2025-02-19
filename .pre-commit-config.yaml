@@ -5,4 +5,6 @@ repos:
         name: Format Racket code
         entry: raco fmt -i
         language: system
-        files: \.rkt$
+        files: '.*\.rkt$'
+        types: [file]
+        pass_filenames: true
