@@ -25,6 +25,12 @@ jobs:
           variant: "CS"
           version: "8.9"
 
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Install treefmt
+        run: nix-env -iA nixpkgs.treefmt
+
       - name: Install fmt
         run: raco pkg install -D --deps search-auto fmt
 
