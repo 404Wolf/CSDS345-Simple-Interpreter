@@ -1,8 +1,8 @@
 repos:
   - repo: local
     hooks:
-      - id: treefmt
-        name: Format code
-        entry: treefmt
+      - id: racket-fmt
+        name: Format Racket code
+        entry: raco fmt -i
         language: system
-        pass_filenames: false
+        files: \.rkt$
