@@ -28,7 +28,7 @@ details into it. A sparse contract risks creating a dysfunctional group.
 
 ## Meetings
 
-As a group, we will meet weekly on Mondays at 5:00 PM, with additional meetings
+As a group, we will meet weekly on Mondays at 6:30 PM, with additional meetings
 organized as needed. Meetings will be focused on providing progress updates
 from each group member and creating opportunities for group members to get help
 from the rest of the group if they get stuck. If someone cannot make a meeting,
