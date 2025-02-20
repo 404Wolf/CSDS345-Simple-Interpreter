@@ -1,6 +1,8 @@
 # Group Contract
 
 ## Members
+Note: Entering your full name constitutes your signature and agreement to abide
+by the below document.
 
 - Christopher Danner
 - Wolf Mermelstein
