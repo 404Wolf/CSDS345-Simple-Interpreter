@@ -1,12 +1,8 @@
 {
-  description = "CSDS Simple Interpreter Project";
-
-  inputs = {
+  description = "CSDS Simple Interpreter Project";  inputs = {
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-  };
-
-  outputs = {
+  };  outputs = {
     self,
     nixpkgs,
     flake-utils,
