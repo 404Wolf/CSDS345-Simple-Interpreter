@@ -1,6 +1,6 @@
 #lang racket
 
-(require "interpreter.rkt")
+(require "mappings.rkt")
 
 (define (assert condition message)
   (if (not condition)
