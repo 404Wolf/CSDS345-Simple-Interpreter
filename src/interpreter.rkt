@@ -12,13 +12,18 @@
 (define (var-declared? var state)
   (number? (index-where state (λ (binding) (eq? (car binding) var)))))
 
-(define (get-var-value state var)
-  (if (member var (all-var-names state))
+(define (get-var-value var state)
+  (if (var-declared? var state)
       (cadar (filter (λ (v) (eq? (car v) var)) state))
       #f))
 
-(define (set-var-binding var val state)
-  (cons (list var val) (remove var state (lambda (variable binding) (eq? variable (car binding))))))
+(define (remove-var-bind binding state)
+  (filter ;
+   (λ (existing-binding) (not (eq? (car existing-binding) (car binding))))
+   state))
+
+(define (set-var-binding binding state)
+  (cons binding (remove-var-bind binding state)))
 
 (define (M_declaration name state)
   (cons state (list name null)))
@@ -29,9 +34,6 @@
              (list (name value))
              pair)
          state)))
-
-(define (M_return expr breaker)
-  (breaker (M_value expr)))
 
 (define (M_int expr state)
   (cond
@@ -71,28 +73,28 @@
    ('<= <=)
    ('>= >=)))
 
-(define (M_state-stmt-list stmt-list state break)
+(define (M_state-stmt-list stmt-list state breaker)
   (if (null? stmt-list)
       state
       (match (caar stmt-list)
-        ['var (M_state-stmt-list (cdr stmt-list) (M_state-decl (car stmt-list) state) break)]
-        ['= (M_state-stmt-list (cdr stmt-list) (M_state-assign (car stmt-list) state) break)]
-        ['while (M_state-stmt-list (cdr stmt-list) (M_state-while (car stmt-list) state break) break)]
-        ['if (M_state-stmt-list (cdr stmt-list) (M_state-if (car stmt-list) state break) break)]
-        ['return (break (M_value (cadar stmt-list) state))]
+        ['var (M_state-stmt-list (cdr stmt-list) (M_state-decl (cdar stmt-list) state) breaker)]
+        ['= (M_state-stmt-list (cdr stmt-list) (M_state-assign (cdar stmt-list) state) breaker)]
+        ['while
+         (M_state-stmt-list (cdr stmt-list) (M_state-while (car stmt-list) state breaker) breaker)]
+        ['if (M_state-stmt-list (cdr stmt-list) (M_state-if (car stmt-list) state breaker) breaker)]
+        ['return (breaker (M_value (cadar stmt-list) state))]
         [_ (error "invalid statement type")])))
 
-(define M_state-decl
-  (λ (declaration state)
-    (if (eq? 3 (length declaration))
-        (set-var-binding (cadr declaration) (M_value (caddr declaration) state))
-        (set-var-binding (cadr declaration) null state))))
+(define (M_state-decl binding state)
+  (set-var-binding (list (car binding) (M_value (cdr binding) state)) state))
 
-(define M_state-assign
-  (λ (assignment state)
-    (if (get-var-value (cadr assignment) state)
-        (set-var-binding (cadr assignment) (M_value (caddr assignment) state) state)
-        (error "variable use before declaration"))))
+;; (define (M_state-assign binding state)
+;;   (if (var-declared? (car binding) state)
+;;       (set-var-binding (list (car binding) (M_value (cdr binding) state)) state)
+;;       (error "variable use before declaration")))
+
+(define (M_state-assign binding state)
+  (cons binding state))
 
 (define M_state-while
   (λ (while-stmt state break)
@@ -118,12 +120,13 @@
           [(regexp "==|!=") (M_value-match-helper M_comp-ops expr M_value state)] ;
           [(regexp ">=|<=|<|>") (M_value-match-helper M_comp-ops expr M_int state)]
           [(regexp "&&|\\|\\|!") (M_value-match-helper M_bool-ops expr M_bool state)]
-          [_ (printf "Working")]) ;(get_state_value expr state))())))
+          [_ (printf state)]) ;(get_state_value expr state))())))
         (match expr
           [#t expr]
           [#f expr]
-          [number expr]
-          ['_ (printf "Working")])))) ;(get_state_value expr state))))))
+          [(pregexp "\\d") expr]
+          ['() '()]
+          [_ (get-var-value expr state)]))))
 
 (define interpret
   (λ (file)
