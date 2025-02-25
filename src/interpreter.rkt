@@ -86,15 +86,14 @@
         [_ (error "invalid statement type")])))
 
 (define (M_state-decl binding state)
-  (set-var-binding (list (car binding) (M_value (cdr binding) state)) state))
-
-;; (define (M_state-assign binding state)
-;;   (if (var-declared? (car binding) state)
-;;       (set-var-binding (list (car binding) (M_value (cdr binding) state)) state)
-;;       (error "variable use before declaration")))
+  (if (null? (cdr binding))
+      (set-var-binding binding state)
+      (set-var-binding (list (car binding) (M_value (cadr binding) state)) state)))
 
 (define (M_state-assign binding state)
-  (cons binding state))
+  (if (var-declared? (car binding) state)
+      (set-var-binding (list (car binding) (M_value (cadr binding) state)) state)
+      (error "variable use before declaration")))
 
 (define M_state-while
   (λ (while-stmt state break)
@@ -116,15 +115,14 @@
   (λ (expr state)
     (if (pair? expr)
         (match (car expr)
-          [(regexp "[+-*/%]") (M_value-match-helper M_num-ops expr M_int state)] ;
-          [(regexp "==|!=") (M_value-match-helper M_comp-ops expr M_value state)] ;
-          [(regexp ">=|<=|<|>") (M_value-match-helper M_comp-ops expr M_int state)]
-          [(regexp "&&|\\|\\|!") (M_value-match-helper M_bool-ops expr M_bool state)]
-          [_ (printf state)]) ;(get_state_value expr state))())))
+          [(pregexp "[+-*/%]") (M_value-match-helper M_num-ops expr M_int state)] ;
+          [(pregexp "==|!=") (M_value-match-helper M_comp-ops expr M_value state)] ;
+          [(pregexp ">=|<=|<|>") (M_value-match-helper M_comp-ops expr M_int state)]
+          [(pregexp "&&|\\|\\|!") (M_value-match-helper M_bool-ops expr M_bool state)])
         (match expr
           [#t expr]
           [#f expr]
-          [(pregexp "\\d") expr]
+          [(? number?) expr]
           ['() '()]
           [_ (get-var-value expr state)]))))
 
