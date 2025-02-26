@@ -7,9 +7,10 @@
   (number? (index-where state (λ (binding) (eq? (car binding) var)))))
 
 (define (get-var-value var state)
-  (if (and (var-declared? var state) (not (null? (length (filter (λ (v) (eq? (car v) var)) state)))))
-      (cadar (filter (λ (v) (eq? (car v) var)) state))
-      (error "variable used before declaration")))
+  (let ([filtered-vars (filter (lambda (v) (eq? (car v) var)) state)])
+    (if (and (var-declared? var state) (not (null? filtered-vars)))
+        (cadar filtered-vars)
+        (error "variable used before declaration"))))
 
 (define (remove-var-bind binding state)
   (filter ;
