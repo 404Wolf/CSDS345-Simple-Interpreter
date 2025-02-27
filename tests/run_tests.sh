@@ -10,7 +10,7 @@ failed=0
 total=0
 
 # Run through all test cases
-for i in {1..20}; do
+for i in {1..21}; do
     num=$(printf "%02d" "$i")
     input="./tests/input/test${num}_in"
     expected="./tests/input/test${num}_out"

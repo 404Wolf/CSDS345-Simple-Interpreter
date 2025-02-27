@@ -8,18 +8,49 @@
 
 ;; `get-symbol` extracts the "symbol" from a list (like '(+ 1 2)), which is
 ;; stored in the car position ('+' in this example).
-(define get-symbol car)
+(define (get-expr-symbol expr)
+  (car expr))
 
-;; The initial state is an empty list (this is abstracted so it can be changed).
+;; `get-operand-1` gets the first operand of a list that looks like
+;; '(== 5 2) would provide 5.
+(define (get-operand-1 expr)
+  (cadr expr))
+
+;; `get-operand-2` gets the first operand of a list that looks like
+;; '(== 5 2) would provide 2.
+(define (get-operand-2 expr)
+  (caddr expr))
+
+;; `get-operand-3` gets the first operand of a list that looks like
+;; '(if (== 5 2) (= x 5) (= y 2)) would return '(= y 2).
+(define (get-operand-3 expr)
+  (cadddr expr))
+
+;; `get-initial-state` returns the initial state for the interpreter, which is
+;; an empty list '().
 (define (get-initial-state)
   null)
+
+; `get-binding-unevaluated-value` gets the unevaluated expression list that is
+; the cadr of the binding
+(define (get-binding-unevaluated-value binding)
+  (cadr binding))
+
+; `get-binding-name` gets the name of a binding pair, which is its car.
+(define (get-binding-name binding)
+  (car binding))
+
+;; `var-used-before-dec-error` raises an error saying that a variable was used
+;; before it was declared.
+(define (var-used-before-dec-error)
+  (error "variable used before declaration"))
 
 ;; `var-declared?` checks if a variable has been declared in the current
 ;; `state`. The `state` is a list of bindings, each binding being '(var-name
 ;; value). We use `index-where` to find the index of the binding for `var`. If
 ;; `index-where` returns a number, it means the variable is declared.
 (define (var-declared? var state)
-  (number? (index-where state (λ (binding) (eq? (car binding) var)))))
+  (number? (index-where state (λ (binding) (eq? (get-binding-name binding) var)))))
 
 ;; `get-pair-where-car-eq` retrieves all pairs in `lis` whose car equals `x`.
 ;; For instance, if `lis` is '((x 10) (y 20) (x 30)) and `x` is 'x,
@@ -32,22 +63,114 @@
 (define (get-var-value var state)
   (if (and (var-declared? var state) (not (null? (get-pair-where-car-eq state var))))
       (cadar (get-pair-where-car-eq state var))
-      (error "variable used before declaration")))
+      (var-used-before-dec-error)))
 
-;; `remove-var-bind` removes any binding from `state` that has the same car
+;; `remove-var-binding` removes any binding from `state` that has the same car
 ;; (variable name) as the `binding` we pass in.
-(define (remove-var-bind binding state)
-  (filter (λ (existing-binding) (not (eq? (car existing-binding) (car binding)))) state))
+(define (remove-var-binding binding state)
+  (filter (λ (existing-binding) ;
+            (not (eq? (car existing-binding) (get-binding-name binding))))
+          state))
 
 ;; `set-var-binding` puts a new binding (var, value) in `state`. If the var was
 ;; already declared, it removes the old binding first. Then it prepends the new
 ;; one.
 (define (set-var-binding binding state)
-  (cons binding (remove-var-bind binding state)))
+  (cons binding (remove-var-binding binding state)))
+
+;; `M_state-stmt-list` processes a list of statements. If we run out of
+;; statements, return the final `state`. Otherwise, evaluate the first
+;; statement and recurse. `breaker` is a continuation used to handle 'return'
+;; statements.
+(define (M_state-stmt-list stmt-list state breaker)
+  (if (null? stmt-list)
+      state
+      (M_state-stmt-list (cdr stmt-list) ;;
+                         (M_state-stmt (car stmt-list) state breaker)
+                         breaker)))
+
+;; `M_state-stmt` matches on the type of statement (declaration, assignment,
+;; while loop, conditional, and return) and dispatches to the appropriate
+;; handler. If it's unrecognized, we error.
+(define (M_state-stmt stmt state breaker)
+  (match (get-expr-symbol stmt)
+    ['var (M_state-decl (cdr stmt) state)]
+    ['= (M_state-assign (cdr stmt) state)]
+    ['while (M_state-while stmt state breaker)]
+    ['if (M_state-if stmt state breaker)]
+    ['return (breaker (M_value (get-operand-1 stmt) state))]
+    [_ (error "invalid statement type")]))
+
+;; `M_state-decl` handles variable declarations.
+;;
+;; Declaration of a variable:
+;;  1. If it's already declared, we error.
+;;  2. If there's no initial value provided (aka the initial value is null, the
+;;     empty list) just store the binding as (var null)).
+;;  3. If there is an initial value, evaluate it and store that in the new
+;;     state.
+(define (M_state-decl binding state)
+  (cond
+    [(var-declared? (get-binding-name binding) state) (error "variable redeclared")]
+    [(null? (cdr binding)) (set-var-binding binding state)]
+    [else
+     (set-var-binding (list (get-binding-name binding)
+                            (M_value (get-binding-unevaluated-value binding) state))
+                      state)]))
+
+;; `M_state-assign` handles variable assignments.
+;;
+;; Assignment of a variable:
+;;  1. If the var is declared, evaluate the expression and return the new
+;;     state.
+;;  2. Otherwise, error about an undeclared variable.
+(define (M_state-assign binding state)
+  (if (var-declared? (get-binding-name binding) state)
+      (set-var-binding (list (get-binding-name binding)
+                             (M_value (get-binding-unevaluated-value binding) state))
+                       state)
+      (var-used-before-dec-error)))
+
+;; `M_state-while` handles while loops.
+;;
+;; While statement:
+;;  1. Evaluate the condition (cadr).
+;;  2. If true, execute the body (caddr) and loop again.
+;;  3. If false, return the state as-is (loop ends).
+(define (M_state-while while-stmt state break)
+  (if (M_value (cadr while-stmt) state)
+      (M_state-while while-stmt (M_state-stmt (get-operand-2 while-stmt) state break) break)
+      state))
+
+;; `contains-else?` checks if an if statement has an else branch.`
+(define (contains-else? if-stmt)
+  (eq? 4 (length if-stmt)))
+
+;; `M_state-if` handles if statements.
+;;
+;; If statement:
+;;  1. Evaluate the condition (cadr).
+;;  2. If true, evaluate and return the state after the "then" branch (caddr).
+;;  3. Else if there's an else branch (length is 4), evaluate "else" branch (cadddr).
+;;  4. Otherwise, do nothing and return state.
+(define (M_state-if if-stmt state break)
+  (cond
+    [(M_value (get-operand-1 if-stmt) state) (M_state-stmt (get-operand-2 if-stmt) state break)]
+    [(contains-else? if-stmt) (M_state-stmt (get-operand-3 if-stmt) state break)]
+    [else state]))
+
+;; `M_value-match-helper` is a small helper that:
+;;  1. Gets the appropriate operator procedure from `op_func_getter`.
+;;  2. Evaluates each of the operands using `M_value` to ensure they are fully
+;;     processed and ready for use by the operator function.
+;;  3. Applies the operator to those mapped results.
+(define (M_value-map-then-apply-operator op_func_getter expr state)
+  ((op_func_getter (get-expr-symbol expr)) (M_value (get-operand-1 expr) state)
+                                           (M_value (get-operand-2 (append expr (list null))) state)))
 
 ;; We use `match-λ` to associate certain symbols with corresponding procedures
 ;; (as a dispatch table) for M_num-ops, M_bool-ops, and M_comp-ops.
-
+;;
 ;; Numeric operations. If the car of an expression is '+', that maps to
 ;; Racket's +, etc. For '-', if the second operand is null, we treat it as
 ;; unary negation; otherwise, binary subtraction.
@@ -78,79 +201,6 @@
            ['<= <=]
            ['>= >=]))
 
-;; `M_state-stmt-list` processes a list of statements. If we run out of
-;; statements, return the final `state`. Otherwise, evaluate the first
-;; statement and recurse. `breaker` is a continuation used to handle 'return'
-;; statements.
-(define (M_state-stmt-list stmt-list state breaker)
-  (if (null? stmt-list)
-      state
-      (M_state-stmt-list (cdr stmt-list) ;;
-                         (M_state-stmt (car stmt-list) state breaker)
-                         breaker)))
-
-;; `M_state-stmt` matches on the type of statement (declaration, assignment,
-;; while loop, conditional, and return) and dispatches to the appropriate
-;; handler. If it's unrecognized, we error.
-(define (M_state-stmt stmt state breaker)
-  (match (car stmt)
-    ['var (M_state-decl (cdr stmt) state)]
-    ['= (M_state-assign (cdr stmt) state)]
-    ['while (M_state-while stmt state breaker)]
-    ['if (M_state-if stmt state breaker)]
-    ['return (breaker (M_value (cadr stmt) state))]
-    [_ (error "invalid statement type")]))
-
-;; Declaration of a variable:
-;;  1. If it's already declared, we error.
-;;  2. If there's no initial value provided (aka the initial value is null, the
-;;     empty list) just store the binding as (var null)).
-;;  3. If there is an initial value, evaluate it and store that in the new
-;;     state.
-(define (M_state-decl binding state)
-  (cond
-    [(var-declared? (car binding) state) (error "variable redeclared")]
-    [(null? (cdr binding)) (set-var-binding binding state)]
-    [else (set-var-binding (list (car binding) (M_value (cadr binding) state)) state)]))
-
-;; Assignment of a variable:
-;;  1. If the var is declared, evaluate the expression and return the new
-;;     state.
-;;  2. Otherwise, error about an undeclared variable.
-(define (M_state-assign binding state)
-  (if (var-declared? (car binding) state)
-      (set-var-binding (list (car binding) (M_value (cadr binding) state)) state)
-      (error "variable use before declaration")))
-
-;; While statement:
-;;  1. Evaluate the condition (cadr).
-;;  2. If true, execute the body (caddr) and loop again.
-;;  3. If false, return the state as-is (loop ends).
-(define (M_state-while while-stmt state break)
-  (if (M_value (cadr while-stmt) state)
-      (M_state-while while-stmt (M_state-stmt (caddr while-stmt) state break) break)
-      state))
-
-;; If statement:
-;;  1. Evaluate the condition (cadr).
-;;  2. If true, evaluate and return the state after the "then" branch (caddr).
-;;  3. Else if there's an else branch (length is 4), evaluate "else" branch (cadddr).
-;;  4. Otherwise, do nothing and return state.
-(define (M_state-if if-stmt state break)
-  (cond
-    [(M_value (cadr if-stmt) state) (M_state-stmt (caddr if-stmt) state break)]
-    [(eq? 4 (length if-stmt)) (M_state-stmt (cadddr if-stmt) state break)]
-    [else state]))
-
-;; `M_value-match-helper` is a small helper that:
-;;  1. Gets the appropriate operator procedure from `op_func_getter`.
-;;  2. Evaluates each of the operands using `M_value` to ensure they are fully
-;;     processed and ready for use by the operator function.
-;;  3. Applies the operator to those mapped results.
-(define (M_value-match-helper op_func_getter expr state)
-  ((op_func_getter (car expr)) (M_value (cadr expr) state)
-                               (M_value (caddr (append expr (list null))) state)))
-
 ;; `M_value` evaluates an expression with respect to the given `state`.
 (define (M_value expr state)
   (cond
@@ -167,14 +217,17 @@
     [(symbol? expr)
      (if (var-declared? expr state)
          (get-var-value expr state)
-         (error "variable used before declaration"))]
+         (var-used-before-dec-error))]
     ;; Algebraic operations
-    [(member (car expr) '(+ - * / %)) (M_value-match-helper M_num-ops expr state)]
+    [(member (get-expr-symbol expr) '(+ - * / %))
+     (M_value-map-then-apply-operator M_num-ops expr state)]
     ;; Comparison operations
-    [(member (car expr) '(== !=)) (M_value-match-helper M_comp-ops expr state)]
-    [(member (car expr) '(>= <= < >)) (M_value-match-helper M_comp-ops expr state)]
+    [(member (get-expr-symbol expr) '(== !=)) (M_value-map-then-apply-operator M_comp-ops expr state)]
+    [(member (get-expr-symbol expr) '(>= <= < >))
+     (M_value-map-then-apply-operator M_comp-ops expr state)]
     ;; Boolean operations
-    [(member (car expr) '(&& || !)) (M_value-match-helper M_bool-ops expr state)]))
+    [(member (get-expr-symbol expr) '(&& || !))
+     (M_value-map-then-apply-operator M_bool-ops expr state)]))
 
 ;; `output-remap` sanitizes the output.
 (define (output-remap output)
@@ -193,8 +246,7 @@
     (output-remap (call/cc (λ (breaker)
                              (M_state-stmt-list (parser file) (get-initial-state) breaker))))))
 
-;; Read a line from standard input and interpret it immediately.
-(interpret (read-line))
+;; Read a line from standard input and interpret it immediately. (used for testing)
+;; (interpret (read-line))
 
-;; Example of how you'd call it on a file (commented out for now):
-;; (interpret "./tests/input/test27_in")
+(interpret "./tests/input/test22_in")
