@@ -1,3 +1,7 @@
+;; Wolf Mermelstein (wsm32) and Christopher Danner (cld99)
+;; 02/26 2025
+;; CSDS345 Spring 2025
+
 #lang racket
 
 ;; Require the parser from a separate file, "simpleParser.rkt"
@@ -245,8 +249,3 @@
   (λ (file)
     (output-remap (call/cc (λ (breaker)
                              (M_state-stmt-list (parser file) (get-initial-state) breaker))))))
-
-;; Read a line from standard input and interpret it immediately. (used for testing)
-;; (interpret (read-line))
-
-(interpret "./tests/input/test22_in")
