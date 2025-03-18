@@ -4,11 +4,17 @@
 
 #lang racket
 
+(require racket/trace)
+
 ;; Require the parser from a separate file, "simpleParser.rkt"
 (require "simpleParser.rkt")
 
 ;; Provide (export) all definitions made in this file
 (provide (all-defined-out))
+
+;; Flattens one layer
+(define (flatten-state lst)
+  (apply append lst))
 
 ;; `get-symbol` extracts the "symbol" from a list (like '(+ 1 2)), which is
 ;; stored in the car position ('+' in this example).
@@ -31,9 +37,9 @@
   (cadddr expr))
 
 ;; `get-initial-state` returns the initial state for the interpreter, which is
-;; an empty list '().
+;; a list containing the empty list '(()).
 (define (get-initial-state)
-  null)
+  (list null))
 
 ; `get-binding-unevaluated-value` gets the unevaluated expression list that is
 ; the cadr of the binding
@@ -41,8 +47,13 @@
   (cadr binding))
 
 ; `get-binding-name` gets the name of a binding pair, which is its car.
-(define (get-binding-name binding)
-  (car binding))
+(define get-binding-name car)
+
+; `get-latest-scope` gets the latest scope which is the leftmost scope.
+(define get-latest-scope car)
+
+; `get-earlier-scopes` gets the earlier scopes which is the right of the leftmost scope.
+(define get-earlier-scopes cdr)
 
 ;; `var-used-before-dec-error` raises an error saying that a variable was used
 ;; before it was declared.
@@ -54,33 +65,40 @@
 ;; value). We use `index-where` to find the index of the binding for `var`. If
 ;; `index-where` returns a number, it means the variable is declared.
 (define (var-declared? var state)
-  (number? (index-where state (λ (binding) (eq? (get-binding-name binding) var)))))
+  (number? (index-where (flatten-state state) (λ (binding) (eq? (get-binding-name binding) var)))))
 
 ;; `get-pair-where-car-eq` retrieves all pairs in `lis` whose car equals `x`.
 ;; For instance, if `lis` is '((x 10) (y 20) (x 30)) and `x` is 'x,
 ;; it returns '((x 10) (x 30)).
 (define (get-pair-where-car-eq lis x)
-  (filter (lambda (v) (eq? (car v) x)) lis))
+  (filter (λ (v) (eq? (car v) x)) lis))
 
 ;; `get-var-value` returns the stored value for a variable `var` in `state`.
 ;; If the variable is not declared or no binding is found, it throws an error.
 (define (get-var-value var state)
-  (if (and (var-declared? var state) (not (null? (get-pair-where-car-eq state var))))
-      (cadar (get-pair-where-car-eq state var))
+  (if (and (var-declared? var state) (not (null? (get-pair-where-car-eq (flatten-state state) var))))
+      (cadar (get-pair-where-car-eq (flatten-state state) var))
       (var-used-before-dec-error)))
 
-;; `remove-var-binding` removes any binding from `state` that has the same car
-;; (variable name) as the `binding` we pass in.
+;; `remove-var-binding` removes any binding from the currect scope of `state`
+;; that has the same car (variable name) as the `binding` we pass in.
 (define (remove-var-binding binding state)
   (filter (λ (existing-binding) ;
-            (not (eq? (car existing-binding) (get-binding-name binding))))
+            (not (eq? (get-binding-name existing-binding) (get-binding-name binding))))
           state))
 
-;; `set-var-binding` puts a new binding (var, value) in `state`. If the var was
+;; `set-var-binding` updates an existing binding (var, value) in `state`.
+(define (set-var-binding binding state)
+  (if (var-declared? (get-binding-name binding) (list (get-latest-scope state)))
+      (cons (cons binding (remove-var-binding binding (get-latest-scope state)))
+            (get-earlier-scopes state))
+      (cons (get-latest-scope state) (set-var-binding binding (get-earlier-scopes state)))))
+
+;; `add-var-binding` puts a new binding (var, value) in `state`. If the var was
 ;; already declared, it removes the old binding first. Then it prepends the new
 ;; one.
-(define (set-var-binding binding state)
-  (cons binding (remove-var-binding binding state)))
+(define (add-var-binding binding state)
+  (cons (cons binding (get-latest-scope state)) (get-earlier-scopes state)))
 
 ;; `M_state-stmt-list` processes a list of statements. If we run out of
 ;; statements, return the final `state`. Otherwise, evaluate the first
@@ -116,9 +134,9 @@
 (define (M_state-decl binding state)
   (cond
     [(var-declared? (get-binding-name binding) state) (error "variable redeclared")]
-    [(null? (cdr binding)) (set-var-binding binding state)]
+    [(null? (cdr binding)) (add-var-binding binding state)]
     [else
-     (set-var-binding (list (get-binding-name binding)
+     (add-var-binding (list (get-binding-name binding)
                             (M_value (get-binding-unevaluated-value binding) state))
                       state)]))
 
@@ -249,3 +267,7 @@
   (λ (file)
     (output-remap (call/cc (λ (breaker)
                              (M_state-stmt-list (parser file) (get-initial-state) breaker))))))
+
+;; (interpret "test_input")
+;; (trace M_state-stmt-list)
+(interpret (read-line))
