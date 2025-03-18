@@ -16,6 +16,10 @@
 (define (flatten-state lst)
   (apply append lst))
 
+;; Add a new layer to the state
+(define (add-state-layer state)
+  (cons null state))
+
 ;; `get-symbol` extracts the "symbol" from a list (like '(+ 1 2)), which is
 ;; stored in the car position ('+' in this example).
 (define (get-expr-symbol expr)
@@ -111,6 +115,11 @@
                          (M_state-stmt (car stmt-list) state breaker)
                          breaker)))
 
+;; `M_state-block` adds a new layer to the `state` and processes a block of
+;; statements.
+(define (M_state-block stmt-list state breaker)
+  (get-earlier-scopes (M_state-stmt-list stmt-list (add-state-layer state) breaker)))
+
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
 ;; while loop, conditional, and return) and dispatches to the appropriate
 ;; handler. If it's unrecognized, we error.
@@ -121,6 +130,7 @@
     ['while (M_state-while stmt state breaker)]
     ['if (M_state-if stmt state breaker)]
     ['return (breaker (M_value (get-operand-1 stmt) state))]
+    ['begin (M_state-block (cdr stmt) state breaker)]
     [_ (error "invalid statement type")]))
 
 ;; `M_state-decl` handles variable declarations.
