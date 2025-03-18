@@ -10,10 +10,15 @@ failed=0
 total=0
 
 # Run through all test cases
-for i in {1..21}; do
+for i in {1..40}; do
     num=$(printf "%02d" "$i")
     input="./tests/input/test${num}_in"
     expected="./tests/input/test${num}_out"
+
+    # Skip if the test files don't exist
+    if [ ! -f "$input" ] || [ ! -f "$expected" ]; then
+        continue
+    fi
 
     echo -n "Test $num: "
 
@@ -68,4 +73,3 @@ echo "Total:  $total"
 
 # Exit with failure if any tests failed
 [ $failed -eq 0 ]
-
