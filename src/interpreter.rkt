@@ -128,10 +128,10 @@
   (match (get-expr-symbol stmt)
     ['var (M_state-decl (cdr stmt) state)]
     ['= (M_state-assign (cdr stmt) state)]
-    ['while (M_state-while stmt state return (call/cc (break)) continue)]
+    ['while (call/cc (λ (break) (M_state-while stmt state return break continue)))]
     ['if (M_state-if stmt state return break continue)]
     ['return (return (M_value (get-operand-1 stmt) state))]
-    ['break (break)]
+    ['break (break state)]
     ['continue (continue)]
     ['begin (M_state-block (cdr stmt) state return break continue)]
     [_ (error "invalid statement type")]))
