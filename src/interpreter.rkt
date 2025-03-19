@@ -107,37 +107,40 @@
 ;; `M_state-stmt-list` processes a list of statements. If we run out of
 ;; statements, return the final `state`. Otherwise, evaluate the first
 ;; statement and recurse.
-(define (M_state-stmt-list stmt-list state return break continue)
+(define (M_state-stmt-list stmt-list state return break continue except)
   (if (null? stmt-list)
       state
       (M_state-stmt-list (cdr stmt-list) ;;
-                         (M_state-stmt (car stmt-list) state return break continue)
+                         (M_state-stmt (car stmt-list) state return break continue except)
                          return
                          break
-                         continue)))
+                         continue
+                         except)))
 
 ;; `M_state-block` adds a new layer to the `state` and processes a block of
 ;; statements.
-(define (M_state-block stmt-list state return break continue)
+(define (M_state-block stmt-list state return break continue except)
   (get-earlier-scopes (M_state-stmt-list stmt-list
                                          (add-state-layer state)
                                          return
                                          (λ (state) (break (get-earlier-scopes state)))
-                                         (λ (state) (continue (get-earlier-scopes state))))))
+                                         (λ (state) (continue (get-earlier-scopes state)))
+                                         except)))
 
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
 ;; while loop, conditional, and return) and dispatches to the appropriate
 ;; handler. If it's unrecognized, we error.
-(define (M_state-stmt stmt state return break continue)
+(define (M_state-stmt stmt state return break continue except)
   (match (get-expr-symbol stmt)
     ['var (M_state-decl (cdr stmt) state)]
     ['= (M_state-assign (cdr stmt) state)]
     ['return (return (M_value (get-operand-1 stmt) state))]
     ['break (break state)]
     ['continue (continue state)]
-    ['while (call/cc (λ (break) (M_state-while stmt state return break continue)))]
-    ['if (M_state-if stmt state return break continue)]
-    ['begin (M_state-block (cdr stmt) state return break continue)]
+    ['while (call/cc (λ (break) (M_state-while stmt state return break continue except)))]
+    ['if (M_state-if stmt state return break continue except)]
+    ['throw (except (get-operand-1 stmt))]
+    ['begin (M_state-block (cdr stmt) state return break continue except)]
     [_ (error "invalid statement type")]))
 
 ;; `M_state-decl` handles variable declarations.
@@ -176,11 +179,12 @@
 ;;  1. Evaluate the condition (cadr).
 ;;  2. If true, execute the body (caddr) and loop again.
 ;;  3. If false, return the state as-is (loop ends).
-(define (M_state-while while-stmt state return break continue)
+(define (M_state-while while-stmt state return break continue except)
   (if (M_value (cadr while-stmt) state)
       (M_state-while
        while-stmt
-       (call/cc (λ (continue) (M_state-stmt (get-operand-2 while-stmt) state return break continue)))
+       (call/cc (λ (continue)
+                  (M_state-stmt (get-operand-2 while-stmt) state return break continue except)))
        return
        break
        continue)
@@ -197,11 +201,12 @@
 ;;  2. If true, evaluate and return the state after the "then" branch (caddr).
 ;;  3. Else if there's an else branch (length is 4), evaluate "else" branch (cadddr).
 ;;  4. Otherwise, do nothing and return state.
-(define (M_state-if if-stmt state return break continue)
+(define (M_state-if if-stmt state return break continue except)
   (cond
     [(M_value (get-operand-1 if-stmt) state)
-     (M_state-stmt (get-operand-2 if-stmt) state return break continue)]
-    [(contains-else? if-stmt) (M_state-stmt (get-operand-3 if-stmt) state return break continue)]
+     (M_state-stmt (get-operand-2 if-stmt) state return break continue except)]
+    [(contains-else? if-stmt)
+     (M_state-stmt (get-operand-3 if-stmt) state return break continue except)]
     [else state]))
 
 ;; `M_value-match-helper` is a small helper that:
@@ -292,8 +297,9 @@
                              (M_state-stmt-list (parser file)
                                                 (get-initial-state)
                                                 return
-                                                (λ () (error "broke outside a while loop"))
-                                                (λ () (error "broke outside a while loop"))))))))
-;; (interpret "test_input")
+                                                (λ (_state) (error "broke outside while loop"))
+                                                (λ (_state) (error "continued outside while loop"))
+                                                (λ (_value) (error "uncaught exception"))))))))
+(interpret "test_input")
 ;; (trace M_state-stmt-list)
-(interpret (read-line))
+;; (interpret (read-line))
