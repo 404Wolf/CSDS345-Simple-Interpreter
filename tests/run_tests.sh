@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+start_index=$1
+end_index=$2
+
 # Colors for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -10,7 +13,7 @@ failed=0
 total=0
 
 # Run through all test cases
-for i in {1..40}; do
+for i in $(seq "$start_index" "$end_index"); do
     num=$(printf "%02d" "$i")
     input="./tests/input/test${num}_in"
     expected="./tests/input/test${num}_out"

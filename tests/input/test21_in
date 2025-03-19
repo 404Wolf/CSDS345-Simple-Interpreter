@@ -1,46 +1,7 @@
-var x = 20;
-var y = 128;
-var a;
-var b = 10;
-var c = false;
-
-x = x + y / b;
-
-y = y % b;
-
-a = 100;
-
-while (a > 0 && x < 10)
-  a = a - 2;
-
-if (a == 90)
-  return a;
-if (a == 80)
-  return x + a;
-if (a == 60)
-  return y;
-if (a == 10)
-  return 999;
-
-if (x == 99)
-  return 111;
-
-var z = x * 2 - a;
-
-if (z == 200)
-  return 222;
-if (z < -100)
-  return 333;
-
-while (x > 1)
-  x = x - 3;
-
-if (x == 2)
-  return 444;
-if (y > 200)
-  return 555;
-if (c == true)
-  return 666;
-
+var x = 10;
+{
+  var y = 2;
+  var z = x * y;
+  x = z;
+}
 return x;
-

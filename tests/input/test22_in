@@ -1,28 +1,14 @@
-var x = 5;
-var y;
-y = 5;
-var z;
-
-if (x == 5)
-  if (y == 5)
-    z = -456789;
-  else
-    z = -238;
-
-var w = false;
-
-while (z >= (-10+2+2+9+2+2+2 * 4) && !w)
-  while (true == (true == (5 == 5)) && z < 0)
-    z = z + 1;
-
-return (-1 + 0);
-return 99;
-return 99;
-return 99;
-return 99;
-return 99;
-return 99;
-return 99;
-return 99;
-return 99;
-
+var a = 31160;
+var b = 1476;
+if (a < b) {
+  var temp = a;
+  a = b;
+  b = temp;
+}
+var r = a % b;
+while (r != 0) {
+  a = b;
+  b = r;
+  r = a % b;
+}
+return b;
