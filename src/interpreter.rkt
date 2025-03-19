@@ -123,7 +123,7 @@
                                          (add-state-layer state)
                                          return
                                          (λ (state) (break (get-earlier-scopes state)))
-                                         continue)))
+                                         (λ (state) (continue (get-earlier-scopes state))))))
 
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
 ;; while loop, conditional, and return) and dispatches to the appropriate
@@ -134,7 +134,7 @@
     ['= (M_state-assign (cdr stmt) state)]
     ['return (return (M_value (get-operand-1 stmt) state))]
     ['break (break state)]
-    ['continue (continue)]
+    ['continue (continue state)]
     ['while (call/cc (λ (break) (M_state-while stmt state return break continue)))]
     ['if (M_state-if stmt state return break continue)]
     ['begin (M_state-block (cdr stmt) state return break continue)]
@@ -178,11 +178,12 @@
 ;;  3. If false, return the state as-is (loop ends).
 (define (M_state-while while-stmt state return break continue)
   (if (M_value (cadr while-stmt) state)
-      (M_state-while while-stmt
-                     (M_state-stmt (get-operand-2 while-stmt) state return break continue)
-                     return
-                     break
-                     continue)
+      (M_state-while
+       while-stmt
+       (call/cc (λ (continue) (M_state-stmt (get-operand-2 while-stmt) state return break continue)))
+       return
+       break
+       continue)
       state))
 
 ;; `contains-else?` checks if an if statement has an else branch.`
