@@ -59,10 +59,13 @@
 ; `get-earlier-scopes` gets the earlier scopes which is the right of the leftmost scope.
 (define get-earlier-scopes cdr)
 
+; `strip-off-catch-name-scope-block` gets the earlier scopes which is the right of the leftmost scope.
+(define strip-off-catch-name-scope-block cdr)
+
 ;; `var-used-before-dec-error` raises an error saying that a variable was used
 ;; before it was declared.
-(define (var-used-before-dec-error)
-  (error "variable used before declaration"))
+(define (var-used-before-dec-error msg)
+  (error (string-append "variable used before declaration" (~a msg))))
 
 ;; `var-declared?` checks if a variable has been declared in the current
 ;; `state`. The `state` is a list of bindings, each binding being '(var-name
@@ -82,7 +85,7 @@
 (define (get-var-value var state)
   (if (and (var-declared? var state) (not (null? (get-pair-where-car-eq (flatten-state state) var))))
       (cadar (get-pair-where-car-eq (flatten-state state) var))
-      (var-used-before-dec-error)))
+      (var-used-before-dec-error var)))
 
 ;; `remove-var-binding` removes any binding from the currect scope of `state`
 ;; that has the same car (variable name) as the `binding` we pass in.
@@ -119,13 +122,18 @@
 
 ;; `M_state-block` adds a new layer to the `state` and processes a block of
 ;; statements.
-(define (M_state-block stmt-list state return break continue except)
-  (get-earlier-scopes (M_state-stmt-list stmt-list
-                                         (add-state-layer state)
-                                         return
-                                         (λ (state) (break (get-earlier-scopes state)))
-                                         (λ (state) (continue (get-earlier-scopes state)))
-                                         except)))
+
+(define (M_state-block stmt-list state return break continue except [state-callback identity])
+  (state-callback (get-earlier-scopes
+                   (M_state-stmt-list
+                    stmt-list
+                    (add-state-layer state)
+                    return
+                    (λ (state) (break (state-callback (get-earlier-scopes state))))
+                    (λ (state) (continue (state-callback (get-earlier-scopes state))))
+                    (λ (state exception)
+                      (except (cons (list 'x 10) (get-earlier-scopes state)) exception))))))
+(trace M_state-block)
 
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
 ;; while loop, conditional, and return) and dispatches to the appropriate
@@ -139,7 +147,16 @@
     ['continue (continue state)]
     ['while (call/cc (λ (break) (M_state-while stmt state return break continue except)))]
     ['if (M_state-if stmt state return break continue except)]
-    ['throw (except (get-operand-1 stmt))]
+    ['throw (except state (get-operand-1 stmt))]
+    ['try
+     (M_state-try (get-operand-1 stmt)
+                  (get-operand-2 stmt)
+                  (get-operand-3 stmt)
+                  state
+                  return
+                  break
+                  continue
+                  except)]
     ['begin (M_state-block (cdr stmt) state return break continue except)]
     [_ (error "invalid statement type")]))
 
@@ -153,12 +170,63 @@
 ;;     state.
 (define (M_state-decl binding state)
   (cond
-    [(var-declared? (get-binding-name binding) state) (error "variable redeclared")]
+    [(var-declared? (get-binding-name binding) state)
+     (error (string-append "variable redeclared: " (~a (car binding))))]
     [(null? (cdr binding)) (add-var-binding binding state)]
     [else
      (add-var-binding (list (get-binding-name binding)
                             (M_value (get-binding-unevaluated-value binding) state))
                       state)]))
+;; (trace M_state-decl)
+
+;; (define (M_state-block stmt-list state return break continue except)
+;;   (get-earlier-scopes (M_state-stmt-list stmt-list
+;;                                          (add-state-layer state)
+(define (M_state-try try-block catch-stmt finally-stmt state return break continue except)
+  (M_state-finally
+   finally-stmt ;; Finally statement
+   (call/cc
+    (λ (handler) ;; The new state post running the try block
+      (M_state-block
+       try-block
+       state
+       return
+       break
+       continue
+       ;; If we encounter an error then we fall back to the catch and
+       ;; use the state that that gives us (we call handler with the
+       ;; new state).
+       (λ (new-state ;; if it fails then it gives us the state that it got up to
+           exception) ;; the thing that it failed with that we have to handle in M_state-catch
+         (handler (M_state-catch catch-stmt new-state return break continue except exception)))))) ;
+   return
+   break
+   continue
+   except))
+
+(define (M_state-catch
+         stmt ; could be '()' or 'catch (e) {}'
+         state
+         return
+         break
+         continue ;
+         except
+         ;; if the catch is emtpy or it errors again then we want to propagate the exception
+         exception)
+  (if (null? stmt)
+      (except state exception) ;; if there is no catch then we propagate the exception
+      (M_state-block (get-operand-2 stmt)
+                     (add-var-binding (list (get-binding-name (get-operand-1 stmt)) exception) state)
+                     return
+                     break
+                     continue
+                     except
+                     strip-off-catch-name-scope-block)))
+
+(define (M_state-finally stmt state return break continue except)
+  (if (null? stmt)
+      state
+      (M_state-block (get-operand-1 stmt) state return break continue except)))
 
 ;; `M_state-assign` handles variable assignments.
 ;;
@@ -171,7 +239,7 @@
       (set-var-binding (list (get-binding-name binding)
                              (M_value (get-binding-unevaluated-value binding) state))
                        state)
-      (var-used-before-dec-error)))
+      (var-used-before-dec-error (get-binding-name binding))))
 
 ;; `M_state-while` handles while loops.
 ;;
@@ -187,8 +255,10 @@
                   (M_state-stmt (get-operand-2 while-stmt) state return break continue except)))
        return
        break
-       continue)
+       continue
+       except)
       state))
+(trace M_state-while)
 
 ;; `contains-else?` checks if an if statement has an else branch.`
 (define (contains-else? if-stmt)
@@ -267,7 +337,7 @@
     [(symbol? expr)
      (if (var-declared? expr state)
          (get-var-value expr state)
-         (var-used-before-dec-error))]
+         (var-used-before-dec-error expr))]
     ;; Algebraic operations
     [(member (get-expr-symbol expr) '(+ - * / %))
      (M_value-map-then-apply-operator M_num-ops expr state)]
@@ -299,7 +369,8 @@
                                                 return
                                                 (λ (_state) (error "broke outside while loop"))
                                                 (λ (_state) (error "continued outside while loop"))
-                                                (λ (_value) (error "uncaught exception"))))))))
+                                                (λ (_state _exception)
+                                                  (error "uncaught except"))))))))
 (interpret "test_input")
 ;; (trace M_state-stmt-list)
 ;; (interpret (read-line))
