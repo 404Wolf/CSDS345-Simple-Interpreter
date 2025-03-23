@@ -4,8 +4,6 @@
 
 #lang racket
 
-(require racket/trace)
-
 ;; Require the parser from a separate file, "simpleParser.rkt"
 (require "simpleParser.rkt")
 
@@ -122,15 +120,14 @@
 
 ;; `M_state-block` adds a new layer to the `state` and processes a block of
 ;; statements.
-(define (M_state-block stmt-list state return break continue except [state-callback identity])
-  (state-callback (get-earlier-scopes
-                   (M_state-stmt-list
-                    stmt-list
-                    (add-state-layer state)
-                    return
-                    (λ (state) (break (state-callback (get-earlier-scopes state))))
-                    (λ (state) (continue (state-callback (get-earlier-scopes state))))
-                    (λ (state exception) (except (get-earlier-scopes state) exception))))))
+(define (M_state-block stmt-list state return break continue except)
+  (get-earlier-scopes (M_state-stmt-list stmt-list
+                                         (add-state-layer state)
+                                         return
+                                         (λ (state) (break (get-earlier-scopes state)))
+                                         (λ (state) (continue (get-earlier-scopes state)))
+                                         (λ (state exception)
+                                           (except (get-earlier-scopes state) exception)))))
 
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
 ;; while loop, conditional, and return) and dispatches to the appropriate
@@ -216,8 +213,7 @@
                      return
                      break
                      continue
-                     except
-                     strip-off-catch-name-scope-block)))
+                     except)))
 
 (define (M_state-finally stmt state return break continue except)
   (if (null? stmt)
@@ -366,6 +362,4 @@
                                                 (λ (_state) (error "continued outside while loop"))
                                                 (λ (_state _exception)
                                                   (error "uncaught except"))))))))
-(interpret "test_input")
-;; (trace M_state-stmt-list)
-;; (interpret (read-line))
+(interpret (read-line))
