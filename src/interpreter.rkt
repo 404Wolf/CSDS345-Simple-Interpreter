@@ -180,7 +180,9 @@
 (define (M_state-try try-block catch-stmt finally-stmt state return break continue except)
   (letrec ([call-with-finally (λ (state)
                                 (M_state-finally finally-stmt state return break continue except))]
-           [return-with-finally (λ (to-return state) (return to-return (call-with-finally state)))])
+           [return-with-finally (λ (to-return state) (return to-return (call-with-finally state)))]
+           [jump-with-finally (λ (func)
+                                (λ (state . args) (apply func (call-with-finally state) args)))])
     (M_state-finally
      finally-stmt ;; Finally statement
      (call/cc
@@ -189,20 +191,20 @@
          try-block
          state
          return-with-finally
-         break
-         continue
-         ;; If we encounter an error then we fall back to the catch and
-         ;; use the state that that gives us (we call handler with the
-         ;; new state).
-         (λ (new-state ;; if it fails then it gives us the state that it got up to
-             exception) ;; the thing that it failed with that we have to handle in M_state-catch
-           (handler (M_state-catch catch-stmt
-                                   new-state
-                                   return-with-finally
-                                   break
-                                   continue
-                                   except
-                                   exception))))))
+         (jump-with-finally break)
+         (jump-with-finally continue)
+         ;; If we encounter an error then we fall back to the catch and use the
+         ;; state that that gives us (we call handler with the new state).
+         (jump-with-finally
+          (λ (new-state ;; if it fails then it gives us the state that it got up to
+              exception) ;; the thing that it failed with that we have to handle in M_state-catch
+            (handler (M_state-catch catch-stmt
+                                    new-state
+                                    return-with-finally
+                                    (jump-with-finally break)
+                                    (jump-with-finally continue)
+                                    (jump-with-finally except)
+                                    exception)))))))
      return
      break
      continue
