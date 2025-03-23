@@ -87,10 +87,10 @@
 
 ;; `remove-var-binding` removes any binding from the currect scope of `state`
 ;; that has the same car (variable name) as the `binding` we pass in.
-(define (remove-var-binding binding state)
+(define (remove-var-binding binding latest-scope-of-state)
   (filter (λ (existing-binding) ;
             (not (eq? (get-binding-name existing-binding) (get-binding-name binding))))
-          state))
+          latest-scope-of-state))
 
 ;; `set-var-binding` updates an existing binding (var, value) in `state`.
 (define (set-var-binding binding state)
@@ -377,5 +377,4 @@
                                                 (λ (_state) (error "continued outside while loop"))
                                                 (λ (_state _exception)
                                                   (error "uncaught except"))))))))
-;; (interpret (read-line))
-(interpret "test_input.js")
+(interpret (read-line))
