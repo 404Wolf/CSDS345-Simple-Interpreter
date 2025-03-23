@@ -138,7 +138,7 @@
   (match (get-expr-symbol stmt)
     ['var (M_state-decl (cdr stmt) state)]
     ['= (M_state-assign (cdr stmt) state)]
-    ['return (return (M_value (get-operand-1 stmt) state))]
+    ['return (return (M_value (get-operand-1 stmt) state) state)]
     ['break (break state)]
     ['continue (continue state)]
     ['while (call/cc (λ (break) (M_state-while stmt state return break continue except)))]
@@ -178,26 +178,35 @@
 ;;   (get-earlier-scopes (M_state-stmt-list stmt-list
 ;;                                          (add-state-layer state)
 (define (M_state-try try-block catch-stmt finally-stmt state return break continue except)
-  (M_state-finally
-   finally-stmt ;; Finally statement
-   (call/cc
-    (λ (handler) ;; The new state post running the try block
-      (M_state-block
-       try-block
-       state
-       return
-       break
-       continue
-       ;; If we encounter an error then we fall back to the catch and
-       ;; use the state that that gives us (we call handler with the
-       ;; new state).
-       (λ (new-state ;; if it fails then it gives us the state that it got up to
-           exception) ;; the thing that it failed with that we have to handle in M_state-catch
-         (handler (M_state-catch catch-stmt new-state return break continue except exception)))))) ;
-   return
-   break
-   continue
-   except))
+  (letrec ([call-with-finally (λ (state)
+                                (M_state-finally finally-stmt state return break continue except))]
+           [return-with-finally (λ (to-return state) (return to-return (call-with-finally state)))])
+    (M_state-finally
+     finally-stmt ;; Finally statement
+     (call/cc
+      (λ (handler) ;; The new state post running the try block
+        (M_state-block
+         try-block
+         state
+         return-with-finally
+         break
+         continue
+         ;; If we encounter an error then we fall back to the catch and
+         ;; use the state that that gives us (we call handler with the
+         ;; new state).
+         (λ (new-state ;; if it fails then it gives us the state that it got up to
+             exception) ;; the thing that it failed with that we have to handle in M_state-catch
+           (handler (M_state-catch catch-stmt
+                                   new-state
+                                   return-with-finally
+                                   break
+                                   continue
+                                   except
+                                   exception))))))
+     return
+     break
+     continue
+     except)))
 
 (define (M_state-catch
          stmt ; could be '()' or 'catch (e) {}'
@@ -361,7 +370,7 @@
     (output-remap (call/cc (λ (return)
                              (M_state-stmt-list (parser file)
                                                 (get-initial-state)
-                                                return
+                                                (λ (to-return _state) (return to-return))
                                                 (λ (_state) (error "broke outside while loop"))
                                                 (λ (_state) (error "continued outside while loop"))
                                                 (λ (_state _exception)
