@@ -1,5 +1,5 @@
 ;; Wolf Mermelstein (wsm32) and Christopher Danner (cld99)
-;; 02/26 2025
+;; 03/22 2025
 ;; CSDS345 Spring 2025
 
 #lang racket
@@ -382,4 +382,3 @@
                                                 (λ (_state) (error "continued outside while loop"))
                                                 (λ (_state _exception)
                                                   (error "uncaught except"))))))))
-(interpret (read-line))
