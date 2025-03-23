@@ -57,9 +57,6 @@
 ; `get-earlier-scopes` gets the earlier scopes which is the right of the leftmost scope.
 (define get-earlier-scopes cdr)
 
-; `strip-off-catch-name-scope-block` gets the earlier scopes which is the right of the leftmost scope.
-(define strip-off-catch-name-scope-block cdr)
-
 ;; `var-used-before-dec-error` raises an error saying that a variable was used
 ;; before it was declared.
 (define (var-used-before-dec-error msg)
@@ -71,6 +68,14 @@
 ;; `index-where` returns a number, it means the variable is declared.
 (define (var-declared? var state)
   (number? (index-where (flatten-state state) (λ (binding) (eq? (get-binding-name binding) var)))))
+
+;; `var-declared-in-scope?` checks if a variable has been declared in the current
+;; scope represented by `state`. The `state` is a list of bindings, where each binding
+;; is structured as '(var-name value). This function uses `index-where` to search
+;; through the flattened state to find the index of the binding for the specified `var`.
+;; If `index-where` returns a number, it indicates the variable is declared in the current scope.
+(define (var-declared-in-scope? var state)
+  (var-declared? var (list (get-latest-scope state))))
 
 ;; `get-pair-where-car-eq` retrieves all pairs in `lis` whose car equals `x`.
 ;; For instance, if `lis` is '((x 10) (y 20) (x 30)) and `x` is 'x,
@@ -166,7 +171,7 @@
 ;;     state.
 (define (M_state-decl binding state)
   (cond
-    [(var-declared? (get-binding-name binding) state)
+    [(var-declared-in-scope? (get-binding-name binding) state)
      (error (string-append "variable redeclared: " (~a (car binding))))]
     [(null? (cdr binding)) (add-var-binding binding state)]
     [else
