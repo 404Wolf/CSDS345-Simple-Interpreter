@@ -120,9 +120,11 @@
 
 ;; `M_state-block` adds a new layer to the `state` and processes a block of
 ;; statements.
-(define (M_state-block stmt-list state return break continue except)
+(define (M_state-block stmt-list state return break continue except (push-new-state-level #t))
   (get-earlier-scopes (M_state-stmt-list stmt-list
-                                         (add-state-layer state)
+                                         (if push-new-state-level
+                                             (add-state-layer state)
+                                             state)
                                          return
                                          (λ (state) (break (get-earlier-scopes state)))
                                          (λ (state) (continue (get-earlier-scopes state)))
@@ -209,11 +211,13 @@
   (if (null? stmt)
       (except state exception) ;; if there is no catch then we propagate the exception
       (M_state-block (get-operand-2 stmt)
-                     (add-var-binding (list (get-binding-name (get-operand-1 stmt)) exception) state)
+                     (add-var-binding (list (get-binding-name (get-operand-1 stmt)) exception)
+                                      (add-state-layer state))
                      return
                      break
                      continue
-                     except)))
+                     except
+                     #f)))
 
 (define (M_state-finally stmt state return break continue except)
   (if (null? stmt)
@@ -362,4 +366,5 @@
                                                 (λ (_state) (error "continued outside while loop"))
                                                 (λ (_state _exception)
                                                   (error "uncaught except"))))))))
-(interpret (read-line))
+;; (interpret (read-line))
+(interpret "test_input.js")
