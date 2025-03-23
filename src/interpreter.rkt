@@ -122,7 +122,6 @@
 
 ;; `M_state-block` adds a new layer to the `state` and processes a block of
 ;; statements.
-
 (define (M_state-block stmt-list state return break continue except [state-callback identity])
   (state-callback (get-earlier-scopes
                    (M_state-stmt-list
@@ -131,9 +130,7 @@
                     return
                     (λ (state) (break (state-callback (get-earlier-scopes state))))
                     (λ (state) (continue (state-callback (get-earlier-scopes state))))
-                    (λ (state exception)
-                      (except (cons (list 'x 10) (get-earlier-scopes state)) exception))))))
-(trace M_state-block)
+                    (λ (state exception) (except (get-earlier-scopes state) exception))))))
 
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
 ;; while loop, conditional, and return) and dispatches to the appropriate
@@ -177,7 +174,6 @@
      (add-var-binding (list (get-binding-name binding)
                             (M_value (get-binding-unevaluated-value binding) state))
                       state)]))
-;; (trace M_state-decl)
 
 ;; (define (M_state-block stmt-list state return break continue except)
 ;;   (get-earlier-scopes (M_state-stmt-list stmt-list
@@ -258,7 +254,6 @@
        continue
        except)
       state))
-(trace M_state-while)
 
 ;; `contains-else?` checks if an if statement has an else branch.`
 (define (contains-else? if-stmt)
