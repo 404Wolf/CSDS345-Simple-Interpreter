@@ -15,7 +15,7 @@ total=0
 # Run through all test cases
 for i in $(seq "$start_index" "$end_index"); do
     num=$(printf "%02d" "$i")
-    input="./tests/input/test${num}_in"
+    input="./tests/input/test${num}_in.js"
     expected="./tests/input/test${num}_out"
 
     # Skip if the test files don't exist

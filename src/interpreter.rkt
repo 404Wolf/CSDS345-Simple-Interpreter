@@ -382,3 +382,5 @@
                                                 (λ (_state) (error "continued outside while loop"))
                                                 (λ (_state _exception)
                                                   (error "uncaught except"))))))))
+
+(interpret (read-line))
