@@ -5,7 +5,7 @@
 #lang racket
 
 ;; Require the parser from a separate file, "simpleParser.rkt"
-(require "simpleParser.rkt")
+(require "functionalParser.rkt")
 
 ;; Provide (export) all definitions made in this file
 (provide (all-defined-out))
@@ -13,6 +13,20 @@
 ;; Flattens one layer
 (define (flatten-state lst)
   (apply append lst))
+
+;; The name of the entrypoint
+(define (get-entrypoint-name)
+  'main)
+
+;; The params for the entrypoint
+(define (get-entrypoint-params)
+  null)
+
+;; Get the rest of the stuff to recurse on
+(define recursion-tail cdr)
+
+;; Get the head of the stuff
+(define recursion-head car)
 
 ;; Add a new layer to the state
 (define (add-state-layer state)
@@ -22,6 +36,9 @@
 ;; stored in the car position ('+' in this example).
 (define (get-expr-symbol expr)
   (car expr))
+
+;; `get-operand` gets all operands of a list
+(define get-operands cdr)
 
 ;; `get-operand-1` gets the first operand of a list that looks like
 ;; '(== 5 2) would provide 5.
@@ -37,6 +54,16 @@
 ;; '(if (== 5 2) (= x 5) (= y 2)) would return '(= y 2).
 (define (get-operand-3 expr)
   (cadddr expr))
+
+; closure:
+; (
+;   <formal param list>,
+;   <function body>,
+;   <function that creates env>
+; )
+(define get-formal-params car)
+(define get-func-body cadr)
+(define get-env-getter caddr)
 
 ;; `get-initial-state` returns the initial state for the interpreter, which is
 ;; a list containing the empty list '(()).
@@ -61,6 +88,15 @@
 ;; before it was declared.
 (define (var-used-before-dec-error msg)
   (error (string-append "variable used before declaration" (~a msg))))
+
+;;`break-exception` is used to signal a break from a while loop.
+(define (break-exception . _args)
+  (error "broke outside while loop"))
+
+;; `continue-exception` used to signal continuation to the next iteration of a
+;; while loop.
+(define (continue-exception . _args)
+  (error "continued outside while loop"))
 
 ;; `var-declared?` checks if a variable has been declared in the current
 ;; `state`. The `state` is a list of bindings, each binding being '(var-name
@@ -104,6 +140,15 @@
             (get-earlier-scopes state))
       (cons (get-latest-scope state) (set-var-binding binding (get-earlier-scopes state)))))
 
+(define (add-var-bindings keys values state (error-message "keys.length != values.lengtth"))
+  (cond
+    [(and (null? keys) (null? values)) state]
+    [(xor (null? keys) (null? values)) (raise error-message)]
+    [else
+     (add-var-bindings (recursion-tail keys)
+                       (recursion-tail values)
+                       (set-var-binding (recursion-head keys) (recursion-head values) state))]))
+
 ;; `add-var-binding` puts a new binding (var, value) in `state`. If the var was
 ;; already declared, it removes the old binding first. Then it prepends the new
 ;; one.
@@ -136,13 +181,40 @@
                                          (λ (state exception)
                                            (except (get-earlier-scopes state) exception)))))
 
+;; `M_state-func` handles function declarations.
+(define (M_state-func name formal-params body state)
+  (M_state-decl ;; to define the function
+   (list name ;; the function "object" being defined
+         (list formal-params
+               body
+               (λ (state casual-params)
+                 (add-var-bindings formal-params casual-params (add-state-layer state)))))
+   state
+   #f))
+
+;; `M_state-call` handles function invocations
+(define (M_state-func-invoke function-name state casual-params return except)
+  (let ([function (get-var-value function-name state)])
+    (M_state-stmt-list (get-func-body function)
+                       ((get-env-getter function) state casual-params)
+                       return
+                       break-exception
+                       continue-exception
+                       except)))
+
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
 ;; while loop, conditional, and return) and dispatches to the appropriate
 ;; handler. If it's unrecognized, we error.
 (define (M_state-stmt stmt state return break continue except)
   (match (get-expr-symbol stmt)
-    ['var (M_state-decl (cdr stmt) state)]
-    ['= (M_state-assign (cdr stmt) state)]
+    ['var (M_state-decl (get-operands stmt) state)]
+    ['= (M_state-assign (get-operands stmt) state)]
+    ['function
+     (M_state-func ;;
+      (get-operand-1 stmt)
+      (get-operand-2 stmt)
+      (get-operand-3 stmt)
+      state)]
     ['return (return (M_value (get-operand-1 stmt) state) state)]
     ['break (break state)]
     ['continue (continue state)]
@@ -169,15 +241,16 @@
 ;;     empty list) just store the binding as (var null)).
 ;;  3. If there is an initial value, evaluate it and store that in the new
 ;;     state.
-(define (M_state-decl binding state)
+(define (M_state-decl binding state (evaluate #t))
   (cond
     [(var-declared-in-scope? (get-binding-name binding) state)
      (error (string-append "variable redeclared: " (~a (car binding))))]
     [(null? (cdr binding)) (add-var-binding binding state)]
-    [else
+    [evaluate
      (add-var-binding (list (get-binding-name binding)
                             (M_value (get-binding-unevaluated-value binding) state))
-                      state)]))
+                      state)]
+    [else (add-var-binding binding state)]))
 
 ;; (define (M_state-block stmt-list state return break continue except)
 ;;   (get-earlier-scopes (M_state-stmt-list stmt-list
@@ -372,15 +445,19 @@
 ;;  2. It calls `call/cc` to capture a continuation `breaker` used to exit early upon 'return'.
 ;;  3. It processes each statement, starting with an empty state (`'()`).
 ;;  4. Finally, we remap the final result to a more human-friendly output.
-(define interpret
-  (λ (file)
-    (output-remap (call/cc (λ (return)
-                             (M_state-stmt-list (parser file)
-                                                (get-initial-state)
-                                                (λ (to-return _state) (return to-return))
-                                                (λ (_state) (error "broke outside while loop"))
-                                                (λ (_state) (error "continued outside while loop"))
-                                                (λ (_state _exception)
-                                                  (error "uncaught except"))))))))
+(define (interpret file)
+  (output-remap (call/cc (λ (return)
+                           (M_state-func-invoke
+                            (get-entrypoint-name)
+                            (M_state-stmt-list (parser file)
+                                               (get-initial-state)
+                                               (λ (to-return _state) (return to-return))
+                                               break-exception
+                                               continue-exception
+                                               (λ (_state _exception) (error "uncaught except")))
+                            (get-entrypoint-params)
+                            (λ (to-return _state) (return to-return))
+                            (λ (_state _exception) (error "uncaught except")))))))
 
-(interpret (read-line))
+;; (interpret (read-line))
+(interpret "test_input.js")
