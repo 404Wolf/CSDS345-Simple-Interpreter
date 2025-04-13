@@ -125,25 +125,45 @@
 ;; If the variable is not declared or no binding is found, it throws an error.
 (define (get-var-value var state)
   (if (and (var-declared? var state) (not (null? (get-pair-where-car-eq (flatten-state state) var))))
-      (cadar (get-pair-where-car-eq (flatten-state state) var))
+      (unbox (cadar (get-pair-where-car-eq (flatten-state state) var)))
       (var-used-before-dec-error var)))
 
 ;; `remove-var-binding` removes any binding from the currect scope of `state`
 ;; that has the same car (variable name) as the `binding` we pass in.
-(define (remove-var-binding binding latest-scope-of-state)
-  (filter (λ (existing-binding) ;
-            (not (eq? (get-binding-name existing-binding) (get-binding-name binding))))
-          latest-scope-of-state))
+;; (define (remove-var-binding binding latest-scope-of-state)
+;;   (filter (λ (existing-binding) ;
+;;             (not (eq? (get-binding-name existing-binding) (get-binding-name binding))))
+;;           latest-scope-of-state))
 
 ;; `set-var-binding` updates an existing binding (var, value) in `state`.
-(define (set-var-binding binding state)
+(define (set-var-binding! binding state)
   (cond
     ;; We've recursed through all scopes without finding the variable
     [(null? state) (error (string-append "variable not declared: " (~a (get-binding-name binding))))]
     [(var-declared? (get-binding-name binding) (list (get-latest-scope state)))
-     (cons (cons binding (remove-var-binding binding (get-latest-scope state)))
-           (get-earlier-scopes state))]
-    [else (cons (get-latest-scope state) (set-var-binding binding (get-earlier-scopes state)))]))
+     ;; If we find the binding in the current scope, update the boxed value
+     (if (null? (get-pair-where-car-eq
+                 (get-latest-scope state)
+                 (get-binding-name binding))) ;; You are allowed to predeclare, this checks for that
+         ;; This shouldn't happen if var-declared? returned true, but handle it just in case
+         (cons (get-latest-scope state) (set-var-binding! binding (get-earlier-scopes state)))
+         ;; Update the boxed value directly and return the unchanged state
+         (begin
+           (set-box! (cadar (get-pair-where-car-eq (get-latest-scope state)
+                                                   (get-binding-name binding)))
+                     (cadr binding))
+           state))]
+    [else (cons (get-latest-scope state) (set-var-binding! binding (get-earlier-scopes state)))]))
+
+;; `set-var-binding` updates an existing binding (var, value) in `state`.
+;; (define (set-var-binding! binding state)
+;;   (cond
+;;     ;; We've recursed through all scopes without finding the variable
+;;     [(null? state) (error (string-append "variable not declared: " (~a (get-binding-name binding))))]
+;;     [(var-declared? (get-binding-name binding) (list (get-latest-scope state)))
+;;      (cons (cons binding (remove-var-binding binding (get-latest-scope state)))
+;;            (get-earlier-scopes state))]
+;;     [else (cons (get-latest-scope state) (set-var-binding! binding (get-earlier-scopes state)))]))
 
 (define (add-var-bindings keys
                           values
@@ -165,9 +185,10 @@
 
 ;; `add-var-binding` puts a new binding (var, value) in `state`. If the var was
 ;; already declared, it removes the old binding first. Then it prepends the new
-;; one.
+;; one with a boxed value.
 (define (add-var-binding binding state)
-  (cons (cons binding (get-latest-scope state)) (get-earlier-scopes state)))
+  (cons (cons (list (get-binding-name binding) (box (cadr binding))) (get-latest-scope state))
+        (get-earlier-scopes state)))
 
 ;; `M_state-stmt-list` processes a list of statements. If we run out of
 ;; statements, return the final `state`. Otherwise, evaluate the first
@@ -341,9 +362,9 @@
 ;;  2. Otherwise, error about an undeclared variable.
 (define (M_state-assign binding state return except)
   (if (var-declared? (get-binding-name binding) state)
-      (set-var-binding (list (get-binding-name binding)
-                             (M_value (get-binding-unevaluated-value binding) state return except))
-                       state)
+      (set-var-binding! (list (get-binding-name binding)
+                              (M_value (get-binding-unevaluated-value binding) state return except))
+                        state)
       (var-used-before-dec-error (get-binding-name binding))))
 
 ;; `M_state-while` handles while loops.
