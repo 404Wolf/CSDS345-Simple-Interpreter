@@ -225,7 +225,7 @@
     name ;; the function "object" being defined
     (list formal-params
           body
-          (λ (state casual-params)
+          (λ (_state casual-params)
             (add-var-bindings formal-params casual-params (add-state-layer state) return except))))
    state
    return
@@ -530,4 +530,3 @@
 
 ;; (interpret (read-line))
 (interpret "test_input.js")
-;; (interpret "test_input.js")
