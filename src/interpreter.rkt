@@ -3,6 +3,7 @@
 ;; CSDS345 Spring 2025
 
 #lang racket
+(require racket/trace)
 
 ;; Require the parser from a separate file, "simpleParser.rkt"
 (require "functionalParser.rkt")
@@ -45,7 +46,7 @@
 (define (get-operand-1 expr)
   (cadr expr))
 
-;; `get-operand-2` gets the first operand of a list that looks like
+;; `get-operand-2` gets the first ope"ESNext", rand of a list that looks like
 ;; '(== 5 2) would provide 2.
 (define (get-operand-2 expr)
   (caddr expr))
@@ -65,10 +66,11 @@
 (define get-func-body cadr)
 (define get-env-getter caddr)
 
-;; `get-initial-state` returns the initial state for the interpreter, which is
-;; a list containing the empty list '(()).
-(define (get-initial-state)
-  (list null))
+;; `get-initial-state` returns the initial state for the interpreter, which
+;; includes all of the "global" declarations
+(define (get-initial-state outer-stmt-list)
+  (M_state-stmt-list outer-stmt-list (add-state-layer null) identity identity identity identity))
+;; '((function fib (a) ((if (== a 0) (return 0) (if (== a 1) (return 1) (return (+ (funcall fib (- a 1)) (funcall fib (- a 2)))))))) (function main () ((return (funcall fib 10)))))%
 
 ; `get-binding-unevaluated-value` gets the unevaluated expression list that is
 ; the cadr of the binding
@@ -135,19 +137,31 @@
 
 ;; `set-var-binding` updates an existing binding (var, value) in `state`.
 (define (set-var-binding binding state)
-  (if (var-declared? (get-binding-name binding) (list (get-latest-scope state)))
-      (cons (cons binding (remove-var-binding binding (get-latest-scope state)))
-            (get-earlier-scopes state))
-      (cons (get-latest-scope state) (set-var-binding binding (get-earlier-scopes state)))))
+  (cond
+    ;; We've recursed through all scopes without finding the variable
+    [(null? state) (error (string-append "variable not declared: " (~a (get-binding-name binding))))]
+    [(var-declared? (get-binding-name binding) (list (get-latest-scope state)))
+     (cons (cons binding (remove-var-binding binding (get-latest-scope state)))
+           (get-earlier-scopes state))]
+    [else (cons (get-latest-scope state) (set-var-binding binding (get-earlier-scopes state)))]))
 
-(define (add-var-bindings keys values state (error-message "keys.length != values.lengtth"))
+(define (add-var-bindings keys
+                          values
+                          state
+                          return
+                          except
+                          (error-message "keys.length != values.lengtth"))
   (cond
     [(and (null? keys) (null? values)) state]
     [(xor (null? keys) (null? values)) (raise error-message)]
     [else
      (add-var-bindings (recursion-tail keys)
                        (recursion-tail values)
-                       (set-var-binding (recursion-head keys) (recursion-head values) state))]))
+                       (add-var-binding (list (recursion-head keys)
+                                              (M_value (recursion-head values) state return except))
+                                        state)
+                       return
+                       except)]))
 
 ;; `add-var-binding` puts a new binding (var, value) in `state`. If the var was
 ;; already declared, it removes the old binding first. Then it prepends the new
@@ -161,12 +175,13 @@
 (define (M_state-stmt-list stmt-list state return break continue except)
   (if (null? stmt-list)
       state
-      (M_state-stmt-list (cdr stmt-list) ;;
-                         (M_state-stmt (car stmt-list) state return break continue except)
-                         return
-                         break
-                         continue
-                         except)))
+      (M_state-stmt-list
+       (cdr stmt-list) ;;
+       (M_state-stmt (car stmt-list) state return break continue except) ; TODO remove illegal word
+       return
+       break
+       continue
+       except)))
 
 ;; `M_state-block` adds a new layer to the `state` and processes a block of
 ;; statements.
@@ -182,40 +197,45 @@
                                            (except (get-earlier-scopes state) exception)))))
 
 ;; `M_state-func` handles function declarations.
-(define (M_state-func name formal-params body state)
+(define (M_state-func name formal-params body state return except)
   (M_state-decl ;; to define the function
-   (list name ;; the function "object" being defined
-         (list formal-params
-               body
-               (λ (state casual-params)
-                 (add-var-bindings formal-params casual-params (add-state-layer state)))))
+   (list
+    name ;; the function "object" being defined
+    (list formal-params
+          body
+          (λ (state casual-params)
+            (add-var-bindings formal-params casual-params (add-state-layer state) return except))))
    state
+   return
+   except
    #f))
 
 ;; `M_state-call` handles function invocations
 (define (M_state-func-invoke function-name state casual-params return except)
   (let ([function (get-var-value function-name state)])
-    (M_state-stmt-list (get-func-body function)
-                       ((get-env-getter function) state casual-params)
-                       return
-                       break-exception
-                       continue-exception
-                       except)))
+    (M_state-block (get-func-body function)
+                   ((get-env-getter function) state casual-params)
+                   return
+                   break-exception
+                   continue-exception
+                   except)))
 
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
 ;; while loop, conditional, and return) and dispatches to the appropriate
 ;; handler. If it's unrecognized, we error.
 (define (M_state-stmt stmt state return break continue except)
   (match (get-expr-symbol stmt)
-    ['var (M_state-decl (get-operands stmt) state)]
-    ['= (M_state-assign (get-operands stmt) state)]
+    ['var (M_state-decl (get-operands stmt) state return except)]
+    ['= (M_state-assign (get-operands stmt) state return except)]
     ['function
      (M_state-func ;;
       (get-operand-1 stmt)
       (get-operand-2 stmt)
       (get-operand-3 stmt)
-      state)]
-    ['return (return (M_value (get-operand-1 stmt) state) state)]
+      state
+      return
+      except)]
+    ['return (return (M_value (get-operand-1 stmt) state return except) state)]
     ['break (break state)]
     ['continue (continue state)]
     ['while (call/cc (λ (break) (M_state-while stmt state return break continue except)))]
@@ -241,14 +261,14 @@
 ;;     empty list) just store the binding as (var null)).
 ;;  3. If there is an initial value, evaluate it and store that in the new
 ;;     state.
-(define (M_state-decl binding state (evaluate #t))
+(define (M_state-decl binding state return except (evaluate #t))
   (cond
     [(var-declared-in-scope? (get-binding-name binding) state)
      (error (string-append "variable redeclared: " (~a (car binding))))]
     [(null? (cdr binding)) (add-var-binding binding state)]
     [evaluate
      (add-var-binding (list (get-binding-name binding)
-                            (M_value (get-binding-unevaluated-value binding) state))
+                            (M_value (get-binding-unevaluated-value binding) state return except))
                       state)]
     [else (add-var-binding binding state)]))
 
@@ -319,10 +339,10 @@
 ;;  1. If the var is declared, evaluate the expression and return the new
 ;;     state.
 ;;  2. Otherwise, error about an undeclared variable.
-(define (M_state-assign binding state)
+(define (M_state-assign binding state return except)
   (if (var-declared? (get-binding-name binding) state)
       (set-var-binding (list (get-binding-name binding)
-                             (M_value (get-binding-unevaluated-value binding) state))
+                             (M_value (get-binding-unevaluated-value binding) state return except))
                        state)
       (var-used-before-dec-error (get-binding-name binding))))
 
@@ -333,7 +353,7 @@
 ;;  2. If true, execute the body (caddr) and loop again.
 ;;  3. If false, return the state as-is (loop ends).
 (define (M_state-while while-stmt state return break continue except)
-  (if (M_value (cadr while-stmt) state)
+  (if (M_value (cadr while-stmt) state return except)
       (M_state-while
        while-stmt
        (call/cc (λ (continue)
@@ -357,20 +377,21 @@
 ;;  4. Otherwise, do nothing and return state.
 (define (M_state-if if-stmt state return break continue except)
   (cond
-    [(M_value (get-operand-1 if-stmt) state)
+    [(M_value (get-operand-1 if-stmt) state return except)
      (M_state-stmt (get-operand-2 if-stmt) state return break continue except)]
     [(contains-else? if-stmt)
      (M_state-stmt (get-operand-3 if-stmt) state return break continue except)]
     [else state]))
 
-;; `M_value-match-helper` is a small helper that:
+;; `M_value-map-then-apply-operator` is a small helper that:
 ;;  1. Gets the appropriate operator procedure from `op_func_getter`.
 ;;  2. Evaluates each of the operands using `M_value` to ensure they are fully
 ;;     processed and ready for use by the operator function.
 ;;  3. Applies the operator to those mapped results.
-(define (M_value-map-then-apply-operator op_func_getter expr state)
-  ((op_func_getter (get-expr-symbol expr)) (M_value (get-operand-1 expr) state)
-                                           (M_value (get-operand-2 (append expr (list null))) state)))
+(define (M_value-map-then-apply-operator op_func_getter expr state return except)
+  ((op_func_getter (get-expr-symbol expr))
+   (M_value (get-operand-1 expr) state return except)
+   (M_value (get-operand-2 (append expr (list null))) state return except)))
 
 ;; We use `match-λ` to associate certain symbols with corresponding procedures
 ;; (as a dispatch table) for M_num-ops, M_bool-ops, and M_comp-ops.
@@ -406,32 +427,50 @@
            ['>= >=]))
 
 ;; `M_value` evaluates an expression with respect to the given `state`.
-(define (M_value expr state)
+(define (M_value expr state return except)
   (cond
     ;; Booleans
     [(eq? expr 'true) #t]
+
     [(eq? expr 'false) #f]
-    ;; `M_value-match-helper` should always call its func with two "evaluated"
-    ;; arguments, so we return null if we are given null (and stop recursing)
-    ;; to allow for our two-argument ! (negation).
+
     [(null? expr) null]
+
     ;; Numbers
     [(number? expr) expr]
+
     ;; Symbols (variables)
     [(symbol? expr)
      (if (var-declared? expr state)
          (get-var-value expr state)
          (var-used-before-dec-error expr))]
+
     ;; Algebraic operations
     [(member (get-expr-symbol expr) '(+ - * / %))
-     (M_value-map-then-apply-operator M_num-ops expr state)]
+     (M_value-map-then-apply-operator M_num-ops expr state return except)]
+
     ;; Comparison operations
-    [(member (get-expr-symbol expr) '(== !=)) (M_value-map-then-apply-operator M_comp-ops expr state)]
+    [(member (get-expr-symbol expr) '(== !=))
+     (M_value-map-then-apply-operator M_comp-ops expr state return except)]
+
     [(member (get-expr-symbol expr) '(>= <= < >))
-     (M_value-map-then-apply-operator M_comp-ops expr state)]
+     (M_value-map-then-apply-operator M_comp-ops expr state return except)]
+
     ;; Boolean operations
     [(member (get-expr-symbol expr) '(&& || !))
-     (M_value-map-then-apply-operator M_bool-ops expr state)]))
+     (M_value-map-then-apply-operator M_bool-ops expr state return except)]
+
+    ;; `M_value-match-helper` should always call its func with two "evaluated"
+    ;; arguments, so we return null if we are given null (and stop recursing)
+    ;; to allow for our two-argument ! (negation).
+    ;; Functions
+    [(eq? (car expr) 'funcall) ;; TODO: remove illegal word
+     (call/cc (λ (return)
+                (M_state-func-invoke (get-operand-1 expr)
+                                     state
+                                     (cddr expr)
+                                     (λ (result _state) (return result)) ;; TODO FIX
+                                     except)))]))
 
 ;; `output-remap` sanitizes the output.
 (define (output-remap output)
@@ -447,17 +486,11 @@
 ;;  4. Finally, we remap the final result to a more human-friendly output.
 (define (interpret file)
   (output-remap (call/cc (λ (return)
-                           (M_state-func-invoke
-                            (get-entrypoint-name)
-                            (M_state-stmt-list (parser file)
-                                               (get-initial-state)
-                                               (λ (to-return _state) (return to-return))
-                                               break-exception
-                                               continue-exception
-                                               (λ (_state _exception) (error "uncaught except")))
-                            (get-entrypoint-params)
-                            (λ (to-return _state) (return to-return))
-                            (λ (_state _exception) (error "uncaught except")))))))
+                           (M_state-func-invoke (get-entrypoint-name)
+                                                (get-initial-state (parser file))
+                                                (get-entrypoint-params)
+                                                (λ (to-return _state) (return to-return))
+                                                (λ (_state _exception) (error "uncaught except")))))))
 
 ;; (interpret (read-line))
 (interpret "test_input.js")
