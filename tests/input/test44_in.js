@@ -10,4 +10,6 @@ function main() {
       x = swap;
     }
   }
+
+  return x;
 }

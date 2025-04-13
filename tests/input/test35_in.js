@@ -12,4 +12,6 @@ function main() {
   } finally {
     x = x + 100;
   }
+
+  return x;
 }

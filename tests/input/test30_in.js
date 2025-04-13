@@ -28,4 +28,6 @@ function main() {
       continue;
     }
   }
+
+  return x * 100 + y * 10 + z;
 }

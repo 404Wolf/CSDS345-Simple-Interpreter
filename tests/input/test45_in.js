@@ -6,4 +6,6 @@ function main() {
   } else {
     var min = y;
   }
+
+  return min;
 }

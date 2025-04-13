@@ -6,4 +6,5 @@ function main() {
       break;
     }
   }
+  return x;
 }

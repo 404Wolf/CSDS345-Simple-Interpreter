@@ -5,4 +5,5 @@ function main() {
     continue;
     x = x + 100;
   }
+  return x;
 }

@@ -16,4 +16,6 @@ function main() {
   } finally {
     result = result + x;
   }
+
+  return result;
 }

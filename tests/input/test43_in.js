@@ -5,4 +5,6 @@ function main() {
     x = x + 2;
     y = y + 1;
   }
+
+  return x;
 }
