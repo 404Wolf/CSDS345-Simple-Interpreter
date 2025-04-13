@@ -171,13 +171,15 @@
     [(and (null? keys) (null? values)) state]
     [(xor (null? keys) (null? values)) (raise error-message)]
     [else
-     (add-var-bindings (recursion-tail keys)
-                       (recursion-tail values)
-                       (add-var-binding (list (recursion-head keys)
-                                              (M_value (recursion-head values) state return except))
-                                        state)
-                       return
-                       except)]))
+     (add-var-bindings
+      (recursion-tail keys)
+      (recursion-tail values)
+      (add-var-binding
+       (list (recursion-head keys)
+             (M_value (recursion-head values) (get-earlier-scopes state) return except))
+       state)
+      return
+      except)]))
 
 ;; `add-var-binding` puts a new binding (var, value) in `state`. If the var was
 ;; already declared, it removes the old binding first. Then it prepends the new
@@ -528,3 +530,4 @@
 
 ;; (interpret (read-line))
 (interpret "test_input.js")
+;; (interpret "test_input.js")
