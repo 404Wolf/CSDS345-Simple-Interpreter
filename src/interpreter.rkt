@@ -256,6 +256,19 @@
       state
       return
       except)]
+
+    ;; `M_value-match-helper` should always call its func with two "evaluated"
+    ;; arguments, so we return null if we are given null (and stop recursing)
+    ;; to allow for our two-argument ! (negation).
+    ;; Functions
+    ['funcall
+     (call/cc (λ (return)
+                (M_state-func-invoke (get-operand-1 stmt)
+                                     state
+                                     (cddr stmt)
+                                     (λ (_result state) (return state)) ;; TODO FIX
+                                     except)))]
+
     ['return (return (M_value (get-operand-1 stmt) state return except) state)]
     ['break (break state)]
     ['continue (continue state)]
@@ -513,5 +526,5 @@
                                                 (λ (to-return _state) (return to-return))
                                                 (λ (_state _exception) (error "uncaught except")))))))
 
-(interpret (read-line))
-;; (interpret "test_input.js")
+;; (interpret (read-line))
+(interpret "test_input.js")
