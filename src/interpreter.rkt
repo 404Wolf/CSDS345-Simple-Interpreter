@@ -204,19 +204,17 @@
 
 ;; `M_state-func` handles function declarations.
 (define (M_state-func name formal-params body state return except)
-  (M_state-decl ;; to define the function
-   (list name ;; the function "object" being defined
-         (list formal-params
-               body
-               (λ (calling-state casual-params)
-                 (add-var-bindings formal-params
-                                   (map (λ (param) (M_value param calling-state return except))
-                                        casual-params)
-                                   (add-state-layer state)))))
-   state
-   return
-   except
-   #f))
+  (letrec (;; to define the function
+           [self (list formal-params
+                       body
+                       (λ (calling-state casual-params)
+                         (add-var-bindings (append formal-params (list name))
+                                           (append (map (λ (param)
+                                                          (M_value param calling-state return except))
+                                                        casual-params)
+                                                   (list self))
+                                           (add-state-layer state))))])
+    (M_state-decl (list name self) state return except #f)))
 
 ;; `M_state-call` handles function invocations
 (define (M_state-func-invoke function-name state casual-params return except)
