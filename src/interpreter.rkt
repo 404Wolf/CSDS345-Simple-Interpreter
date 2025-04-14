@@ -1,9 +1,8 @@
 ;; Wolf Mermelstein (wsm32) and Christopher Danner (cld99)
-;; 03/22 2025
+;; 04/13 2025
 ;; CSDS345 Spring 2025
 
 #lang racket
-(require racket/trace)
 
 ;; Require the parser from a separate file, "simpleParser.rkt"
 (require "functionalParser.rkt")
@@ -18,6 +17,15 @@
 ;; The name of the entrypoint
 (define (get-entrypoint-name)
   'main)
+
+;; Get the rest of the stuff to recurse on
+(define recursion-tail cdr)
+
+;; Get the head of the stuff
+(define recursion-head car)
+
+;; Get the function's casual params (actual params)
+(define get-casual-params cddr)
 
 ;; The params for the entrypoint
 (define (get-entrypoint-params)
@@ -57,9 +65,6 @@
 ;   <function that creates env>
 ; )
 
-;; `get-formal-params` gets the formal param list from the closure
-(define get-formal-params car)
-
 ;; `get-func-body` gets the function body from the closure
 (define get-func-body cadr)
 
@@ -91,7 +96,7 @@
 (define get-earlier-scopes cdr)
 
 ;; `restore-state` restores the state layers to a specified state.
-(define (restore-state new-state old-state)
+(define (restore-state _new-state old-state)
   old-state)
 
 ;; `var-used-before-dec-error` raises an error saying that a variable was used
@@ -152,20 +157,20 @@
     [(var-declared? (get-binding-name binding) (list (get-latest-scope state)))
      (begin
        (set-box! (cadar (get-pair-where-car-eq (get-latest-scope state) (get-binding-name binding)))
-                 (get-binding-unevaluated-value
-                  binding)) ;; TODO: Should this use cadr instead of cdr?
+                 (get-binding-unevaluated-value binding))
        state)]
     [else (cons (get-latest-scope state) (set-var-binding! binding (get-earlier-scopes state)))]))
 
-;; TODO: Add documentation comments
+;; `add-var-bindings` zips and adds many bindings to the state.
 (define (add-var-bindings keys values state (error-message "keys.length != values.length"))
   (cond
     [(and (null? keys) (null? values)) state]
     [(xor (null? keys) (null? values)) (raise error-message)]
     [else
-     (add-var-bindings (cdr keys)
-                       (cdr values)
-                       (add-var-binding (list (car keys) (car values)) state))]))
+     (add-var-bindings (recursion-tail keys)
+                       (recursion-tail values)
+                       (add-var-binding (list (recursion-head keys) (recursion-head values))
+                                        state))]))
 
 ;; `add-var-binding` puts a new binding (var, value) in `state`.
 (define (add-var-binding binding state)
@@ -181,13 +186,12 @@
 (define (M_state-stmt-list stmt-list state return break continue except)
   (if (null? stmt-list)
       state
-      (M_state-stmt-list
-       (cdr stmt-list) ;;
-       (M_state-stmt (car stmt-list) state return break continue except) ; TODO remove illegal word
-       return
-       break
-       continue
-       except)))
+      (M_state-stmt-list (recursion-tail stmt-list) ;;
+                         (M_state-stmt (recursion-head stmt-list) state return break continue except)
+                         return
+                         break
+                         continue
+                         except)))
 
 ;; `M_state-block` adds a new layer to the `state` and processes a block of
 ;; statements.
@@ -216,9 +220,9 @@
                                            (add-state-layer state))))])
     (M_state-decl (list name self) state return except #f)))
 
-;; `M_state-call` handles function invocations
+;; `M_state-func-invoke` handles function invocations
 (define (M_state-func-invoke function-name state casual-params return except)
-  (let ([function (get-var-value function-name state)]) ;; TODO: Confirm whether this is functional
+  (let ([function (get-var-value function-name state)])
     (restore-state
      (M_state-block (get-func-body function)
                     ((get-env-getter function) state casual-params)
@@ -244,19 +248,13 @@
       state
       return
       except)]
-
-    ;; `M_value-match-helper` should always call its func with two "evaluated"
-    ;; arguments, so we return null if we are given null (and stop recursing)
-    ;; to allow for our two-argument ! (negation).
-    ;; Functions
     ['funcall
      (call/cc (λ (return)
                 (M_state-func-invoke (get-operand-1 stmt)
                                      state
-                                     (cddr stmt)
+                                     (get-casual-params stmt)
                                      (λ (_result state) (return state))
                                      except)))]
-
     ['return (return (M_value (get-operand-1 stmt) state return except) state)]
     ['break (break state)]
     ['continue (continue state)]
@@ -286,7 +284,7 @@
 (define (M_state-decl binding state return except (evaluate #t))
   (cond
     [(var-declared-in-scope? (get-binding-name binding) state)
-     (error (string-append "variable redeclared: " (~a (car binding))))]
+     (error (string-append "variable redeclared: " (~a (get-binding-name binding))))]
     [(null? (cdr binding)) (add-var-binding binding state)]
     [evaluate
      (add-var-binding (list (get-binding-name binding)
@@ -486,12 +484,12 @@
     ;; arguments, so we return null if we are given null (and stop recursing)
     ;; to allow for our two-argument ! (negation).
     ;; Functions
-    [(eq? (car expr) 'funcall) ;; TODO: remove illegal word
+    [(eq? (get-expr-symbol expr) 'funcall)
      (call/cc (λ (return)
                 (M_state-func-invoke (get-operand-1 expr)
                                      state
-                                     (cddr expr)
-                                     (λ (result _state) (return result)) ;; TODO FIX
+                                     (get-casual-params expr)
+                                     (λ (result _state) (return result))
                                      except)))]))
 
 ;; `output-remap` sanitizes the output.
@@ -513,7 +511,4 @@
                                                 (get-entrypoint-params)
                                                 (λ (to-return _state) (return to-return))
                                                 (λ (_state _exception) (error "uncaught except")))))))
-
-(interpret (read-line))
-;; (interpret "test_input.js")
 
