@@ -23,12 +23,6 @@
 (define (get-entrypoint-params)
   null)
 
-;; Get the rest of the stuff to recurse on
-(define recursion-tail cdr)
-
-;; Get the head of the stuff
-(define recursion-head car)
-
 ;; Add a new layer to the state
 (define (add-state-layer state)
   (cons null state))
@@ -62,34 +56,48 @@
 ;   <function body>,
 ;   <function that creates env>
 ; )
+
+;; `get-formal-params` gets the formal param list from the closure
 (define get-formal-params car)
+
+;; `get-func-body` gets the function body from the closure
 (define get-func-body cadr)
+
+;; `get-env-getter` gets the environment creation function from the closure
 (define get-env-getter caddr)
 
 ;; `get-initial-state` returns the initial state for the interpreter, which
 ;; includes all of the "global" declarations
 (define (get-initial-state outer-stmt-list)
-  (M_state-stmt-list outer-stmt-list (add-state-layer null) identity identity identity identity))
-;; '((function fib (a) ((if (== a 0) (return 0) (if (== a 1) (return 1) (return (+ (funcall fib (- a 1)) (funcall fib (- a 2)))))))) (function main () ((return (funcall fib 10)))))%
+  (M_state-stmt-list outer-stmt-list
+                     (add-state-layer null)
+                     (λ (_value _state) (error "illegal return"))
+                     break-exception
+                     continue-exception
+                     (λ (_state _exception) (error "uncaught except"))))
 
-; `get-binding-unevaluated-value` gets the unevaluated expression list that is
-; the cadr of the binding
+;; `get-binding-unevaluated-value` gets the unevaluated expression list that is
+;; the cadr of the binding
 (define (get-binding-unevaluated-value binding)
   (cadr binding))
 
-; `get-binding-name` gets the name of a binding pair, which is its car.
+;; `get-binding-name` gets the name of a binding pair, which is its car.
 (define get-binding-name car)
 
-; `get-latest-scope` gets the latest scope which is the leftmost scope.
+;; `get-latest-scope` gets the latest scope which is the leftmost scope.
 (define get-latest-scope car)
 
-; `get-earlier-scopes` gets the earlier scopes which is the right of the leftmost scope.
+;; `get-earlier-scopes` gets the earlier scopes which is the right of the leftmost scope.
 (define get-earlier-scopes cdr)
+
+;; `restore-state` restores the state layers to a specified state.
+(define (restore-state new-state old-state)
+  old-state)
 
 ;; `var-used-before-dec-error` raises an error saying that a variable was used
 ;; before it was declared.
 (define (var-used-before-dec-error msg)
-  (error (string-append "variable used before declaration" (~a msg))))
+  (error (string-append "variable used before declaration " (~a msg))))
 
 ;;`break-exception` is used to signal a break from a while loop.
 (define (break-exception . _args)
@@ -126,19 +134,12 @@
 (define (get-var-value var state)
   ;; Check to see if it is declared, then check to see if it is a pair
   (if (and (var-declared? var state)
-           (not (null? (cdar (get-pair-where-car-eq (flatten-state state) var)))))
+           (not (null? (unbox (cadar (get-pair-where-car-eq (flatten-state state) var))))))
       ;; If it is a pair and declared, then return the value
       (unbox (cadar (get-pair-where-car-eq (flatten-state state)
                                            var))) ; the car of the cdr of the car is the binding value
       ;; Otherwise, throw an exception
       (var-used-before-dec-error var)))
-
-;; `remove-var-binding` removes any binding from the currect scope of `state`
-;; that has the same car (variable name) as the `binding` we pass in.
-(define (remove-var-binding binding latest-scope-of-state)
-  (filter (λ (existing-binding) ;
-            (not (eq? (get-binding-name existing-binding) (get-binding-name binding))))
-          latest-scope-of-state))
 
 ;; `set-var-binding` updates an existing binding (var, value) in `state`.
 ;; If the <binding> is a single-element list (not a pair), this errors (that is
@@ -149,44 +150,33 @@
     ;; we've recursed through all scopes without finding the variable
     [(null? state) (error (string-append "variable not declared: " (~a (get-binding-name binding))))]
     [(var-declared? (get-binding-name binding) (list (get-latest-scope state)))
-
-     (if (null? (cdr (get-pair-where-car-eq (get-latest-scope state) (get-binding-name binding))))
-         (cons (cons (list (get-binding-name binding) (box (get-binding-unevaluated-value binding)))
-                     (remove-var-binding binding (get-latest-scope state)))
-               (get-earlier-scopes state))
-         (begin
-           (set-box! (cadr (get-pair-where-car-eq (get-latest-scope state)
-                                                  (get-binding-name binding)))
-                     (get-binding-unevaluated-value binding))
-           state))]
+     (begin
+       (set-box! (cadar (get-pair-where-car-eq (get-latest-scope state)
+                                               (get-binding-name binding)))
+                 (get-binding-unevaluated-value binding)) ;; TODO: Should this use cadr instead of cdr?
+       state)]
     [else (cons (get-latest-scope state) (set-var-binding! binding (get-earlier-scopes state)))]))
 
+;; TODO: Add documentation comments
 (define (add-var-bindings keys
                           values
                           state
-                          return
-                          except
-                          (error-message "keys.length != values.lengtth"))
+                          (error-message "keys.length != values.length"))
   (cond
     [(and (null? keys) (null? values)) state]
     [(xor (null? keys) (null? values)) (raise error-message)]
     [else
      (add-var-bindings
-      (recursion-tail keys)
-      (recursion-tail values)
+      (cdr keys)
+      (cdr values)
       (add-var-binding
-       (list (recursion-head keys)
-             (M_value (recursion-head values) (get-earlier-scopes state) return except))
-       state)
-      return
-      except)]))
+       (list (car keys) (car values))
+       state))]))
 
-;; `add-var-binding` puts a new binding (var, value) in `state`. If the var was
-;; already declared, it removes the old binding first. Then it prepends the new
-;; one with a boxed value.
+;; `add-var-binding` puts a new binding (var, value) in `state`.
 (define (add-var-binding binding state)
   (cons (cons (if (null? (cdr binding))
-                  binding
+                  (list (get-binding-name binding) (box null))
                   (list (get-binding-name binding) (box (cadr binding))))
               (get-latest-scope state))
         (get-earlier-scopes state)))
@@ -225,8 +215,10 @@
     name ;; the function "object" being defined
     (list formal-params
           body
-          (λ (_state casual-params)
-            (add-var-bindings formal-params casual-params (add-state-layer state) return except))))
+          (λ (calling-state casual-params)
+            (add-var-bindings formal-params
+                              (map (λ (param) (M_value param calling-state return except)) casual-params)
+                              (add-state-layer state)))))
    state
    return
    except
@@ -234,14 +226,17 @@
 
 ;; `M_state-call` handles function invocations
 (define (M_state-func-invoke function-name state casual-params return except)
-  (let ([function (get-var-value function-name state)])
-    (M_state-block (get-func-body function)
-                   ((get-env-getter function) state casual-params)
-                   return
-                   break-exception
-                   continue-exception
-                   except
-                   #f)))
+  (let ([function (get-var-value function-name state)]) ;; TODO: Confirm whether this is functional
+    (restore-state (M_state-block (get-func-body function)
+                                  ((get-env-getter function) state casual-params)
+                                  (λ (to-return new-state)
+                                    (return to-return (restore-state new-state state)))
+                                  break-exception
+                                  continue-exception
+                                  (λ (new-state exception)
+                                    (except (restore-state new-state state) exception))
+                                  #f)
+                   state)))
 
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
 ;; while loop, conditional, and return) and dispatches to the appropriate
