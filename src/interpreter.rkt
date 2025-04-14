@@ -204,7 +204,7 @@
 
 ;; `M_state-func` handles function declarations.
 (define (M_state-func name formal-params body state return except)
-  (letrec (;; to define the function
+  (letrec (;; to define the function with access to itself
            [self (list formal-params
                        body
                        (λ (calling-state casual-params)
@@ -254,7 +254,7 @@
                 (M_state-func-invoke (get-operand-1 stmt)
                                      state
                                      (cddr stmt)
-                                     (λ (_result state) (return state)) ;; TODO FIX
+                                     (λ (_result state) (return state))
                                      except)))]
 
     ['return (return (M_value (get-operand-1 stmt) state return except) state)]
@@ -262,7 +262,7 @@
     ['continue (continue state)]
     ['while (call/cc (λ (break) (M_state-while stmt state return break continue except)))]
     ['if (M_state-if stmt state return break continue except)]
-    ['throw (except state (get-operand-1 stmt))]
+    ['throw (except state (M_value (get-operand-1 stmt) state return except))]
     ['try
      (M_state-try (get-operand-1 stmt)
                   (get-operand-2 stmt)
@@ -514,6 +514,6 @@
                                                 (λ (to-return _state) (return to-return))
                                                 (λ (_state _exception) (error "uncaught except")))))))
 
-;; (interpret (read-line))
-(interpret "test_input.js")
+(interpret (read-line))
+;; (interpret "test_input.js")
 
