@@ -20,6 +20,7 @@
             racket
             treefmt
             pre-commit
+            typescript-language-server
           ];
         };
       };
