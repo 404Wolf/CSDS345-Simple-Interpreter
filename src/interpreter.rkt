@@ -151,27 +151,21 @@
     [(null? state) (error (string-append "variable not declared: " (~a (get-binding-name binding))))]
     [(var-declared? (get-binding-name binding) (list (get-latest-scope state)))
      (begin
-       (set-box! (cadar (get-pair-where-car-eq (get-latest-scope state)
-                                               (get-binding-name binding)))
-                 (get-binding-unevaluated-value binding)) ;; TODO: Should this use cadr instead of cdr?
+       (set-box! (cadar (get-pair-where-car-eq (get-latest-scope state) (get-binding-name binding)))
+                 (get-binding-unevaluated-value
+                  binding)) ;; TODO: Should this use cadr instead of cdr?
        state)]
     [else (cons (get-latest-scope state) (set-var-binding! binding (get-earlier-scopes state)))]))
 
 ;; TODO: Add documentation comments
-(define (add-var-bindings keys
-                          values
-                          state
-                          (error-message "keys.length != values.length"))
+(define (add-var-bindings keys values state (error-message "keys.length != values.length"))
   (cond
     [(and (null? keys) (null? values)) state]
     [(xor (null? keys) (null? values)) (raise error-message)]
     [else
-     (add-var-bindings
-      (cdr keys)
-      (cdr values)
-      (add-var-binding
-       (list (car keys) (car values))
-       state))]))
+     (add-var-bindings (cdr keys)
+                       (cdr values)
+                       (add-var-binding (list (car keys) (car values)) state))]))
 
 ;; `add-var-binding` puts a new binding (var, value) in `state`.
 (define (add-var-binding binding state)
@@ -211,14 +205,14 @@
 ;; `M_state-func` handles function declarations.
 (define (M_state-func name formal-params body state return except)
   (M_state-decl ;; to define the function
-   (list
-    name ;; the function "object" being defined
-    (list formal-params
-          body
-          (λ (calling-state casual-params)
-            (add-var-bindings formal-params
-                              (map (λ (param) (M_value param calling-state return except)) casual-params)
-                              (add-state-layer state)))))
+   (list name ;; the function "object" being defined
+         (list formal-params
+               body
+               (λ (calling-state casual-params)
+                 (add-var-bindings formal-params
+                                   (map (λ (param) (M_value param calling-state return except))
+                                        casual-params)
+                                   (add-state-layer state)))))
    state
    return
    except
@@ -227,16 +221,15 @@
 ;; `M_state-call` handles function invocations
 (define (M_state-func-invoke function-name state casual-params return except)
   (let ([function (get-var-value function-name state)]) ;; TODO: Confirm whether this is functional
-    (restore-state (M_state-block (get-func-body function)
-                                  ((get-env-getter function) state casual-params)
-                                  (λ (to-return new-state)
-                                    (return to-return (restore-state new-state state)))
-                                  break-exception
-                                  continue-exception
-                                  (λ (new-state exception)
-                                    (except (restore-state new-state state) exception))
-                                  #f)
-                   state)))
+    (restore-state
+     (M_state-block (get-func-body function)
+                    ((get-env-getter function) state casual-params)
+                    (λ (to-return new-state) (return to-return (restore-state new-state state)))
+                    break-exception
+                    continue-exception
+                    (λ (new-state exception) (except (restore-state new-state state) exception))
+                    #f)
+     state)))
 
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
 ;; while loop, conditional, and return) and dispatches to the appropriate
@@ -525,3 +518,4 @@
 
 ;; (interpret (read-line))
 (interpret "test_input.js")
+
