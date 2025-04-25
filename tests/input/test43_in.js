@@ -1,4 +1,5 @@
-function main() {
+class A {
+    static function main() {
   var x = 0;
   var y = 10;
   while (!(x >= y) || !(y > 25)) {
@@ -8,3 +9,5 @@ function main() {
 
   return x;
 }
+
+  }

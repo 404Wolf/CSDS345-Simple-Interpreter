@@ -1,4 +1,5 @@
-function main() {
+class A {
+    static function main() {
   var x = 1;
   var y = x + 1;
   if (x < y) {
@@ -12,3 +13,5 @@ function main() {
   }
   return x;
 }
+
+  }

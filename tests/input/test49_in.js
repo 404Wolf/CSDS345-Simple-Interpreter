@@ -1,4 +1,5 @@
-function fib(a) {
+class A {
+    function fib(a) {
   if (a == 0)
     return 0;
   else if (a == 1)
@@ -7,6 +8,7 @@ function fib(a) {
     return fib(a-1) + fib(a-2);
 }
 
-function main() {
+static function main() {
   return fib(10);
 }
+  }

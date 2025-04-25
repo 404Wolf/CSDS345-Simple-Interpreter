@@ -1,4 +1,5 @@
-var a = 10;
+class A {
+    var a = 10;
 var b = 20;
 
 function bmethod() {
@@ -11,7 +12,8 @@ function cmethod() {
   return bmethod() + a + b;
 }
 
-function main () {
+static function main () {
   var b = 5;
   return cmethod() + a + b;
 }
+  }

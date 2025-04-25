@@ -1,6 +1,8 @@
-var x = 4;
+class A {
+    var x = 4;
 var y = 6 + x;
 
-function main() {
+static function main() {
   return x + y;
 }
+  }

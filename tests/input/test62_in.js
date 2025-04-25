@@ -1,4 +1,5 @@
-function f(x) {
+class A {
+    function f(x) {
   function g(x) {
     var b;
     b = x;
@@ -13,6 +14,7 @@ function f(x) {
   return g(x) + h(x);
 }
 
-function main() {
+static function main() {
   return f(10);
 }
+  }

@@ -1,4 +1,5 @@
-function fact(n) {
+class A {
+    function fact(n) {
   var r = 1;
   while (n > 1) {
     r = r * n;
@@ -7,6 +8,7 @@ function fact(n) {
   return r;
 }
 
-function main() {
+static function main() {
   return fact(fact(3) - fact(2));
 }
+  }

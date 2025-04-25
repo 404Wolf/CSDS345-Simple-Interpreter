@@ -5,7 +5,7 @@
 #lang racket
 
 ;; Require the parser from a separate file, "simpleParser.rkt"
-(require "functionalParser.rkt")
+(require "classParser.rkt")
 
 ;; Provide (export) all definitions made in this file
 (provide (all-defined-out))
@@ -512,3 +512,4 @@
                                                 (λ (to-return _state) (return to-return))
                                                 (λ (_state _exception) (error "uncaught except")))))))
 
+(define-syntax exec code)

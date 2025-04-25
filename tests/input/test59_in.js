@@ -1,4 +1,5 @@
-function collatz(n) {
+class A {
+    function collatz(n) {
   var counteven = 0;
   var countodd = 0;
 
@@ -22,6 +23,7 @@ function collatz(n) {
 }
 
 
-function main() {
+static function main() {
   return collatz(111);
 }
+  }

@@ -1,4 +1,5 @@
-function main() {
+class A {
+    static function main() {
   var x = 0;
   x = x + 25;
   return x;
@@ -6,3 +7,5 @@ function main() {
   return x;
   x = x + 25;
 }
+
+  }
