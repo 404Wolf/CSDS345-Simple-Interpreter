@@ -3,6 +3,7 @@
 ;; CSDS345 Spring 2025
 
 #lang racket
+(require racket/cmdline)
 
 ;; Require the parser from a separate file, "simpleParser.rkt"
 (require "classParser.rkt")
@@ -512,4 +513,9 @@
                                                 (λ (to-return _state) (return to-return))
                                                 (λ (_state _exception) (error "uncaught except")))))))
 
-(define-syntax exec code)
+(define (run-interpreter)
+  (command-line #:program "interpreter"
+                #:args (file-path [class-name ""])
+                (interpret file-path))) ;;class-name
+
+(run-interpreter)
