@@ -4,12 +4,19 @@
 
 #lang racket
 (require racket/cmdline)
+(require racket/trace)
 
 ;; Require the parser from a separate file, "simpleParser.rkt"
 (require "classParser.rkt")
 
 ;; Provide (export) all definitions made in this file
 (provide (all-defined-out))
+
+;; Returns func applied to something, or null if that thing was null
+(define (optional-apply f x)
+  (if (null? x)
+      null
+      (f x)))
 
 ;; Flattens one layer
 (define (flatten-state lst)
@@ -19,7 +26,9 @@
 (define (get-entrypoint-name)
   'main)
 
-;; Get the rest of the stuff to recurse on
+;; Prepend to the list
+(define prepend cons)
+
 (define recursion-tail cdr)
 
 ;; Get the head of the stuff
@@ -33,8 +42,8 @@
   null)
 
 ;; Add a new layer to the state
-(define (add-state-layer state)
-  (cons null state))
+(define (add-state-layer state (lis null))
+  (cons lis state))
 
 ;; `get-symbol` extracts the "symbol" from a list (like '(+ 1 2)), which is
 ;; stored in the car position ('+' in this example).
@@ -59,6 +68,15 @@
 (define (get-operand-3 expr)
   (cadddr expr))
 
+(define (get-field-defaults closure)
+  (car closure))
+
+(define (get-methods closure)
+  (cadr closure))
+
+(define (get-superclass closure)
+  (caddr closure))
+
 ; closure:
 ; (
 ;   <formal param list>,
@@ -75,20 +93,28 @@
 ;; `get-static-type` gets the static class associated with the method
 (define get-static-type cadddr)
 
+;; `get-empty-state` returns an empty state
+(define (get-empty-state)
+  (list null))
+
 ;; `get-initial-state` returns the initial state for the interpreter, which
 ;; includes all of the "global" declarations
 (define (get-initial-state outer-stmt-list)
   (M_state-stmt-list outer-stmt-list
-                     (add-state-layer null)
-                     (λ (_value _state) (error "illegal return"))
+                     (get-empty-state)
+                     (λ (_value _state) (illegal-return-exception))
                      break-exception
                      continue-exception
-                     (λ (_state _exception) (error "uncaught except"))))
+                     (λ (_state _exception) (uncaught-exception-exception))))
 
 ;; `get-binding-unevaluated-value` gets the unevaluated expression list that is
 ;; the cadr of the binding
 (define (get-binding-unevaluated-value binding)
   (cadr binding))
+
+(define (get-evaled-binding binding state return except)
+  (list (get-binding-name binding)
+        ((M_value (get-binding-unevaluated-value binding) state return except))))
 
 ;; `get-binding-name` gets the name of a binding pair, which is its car.
 (define get-binding-name car)
@@ -116,6 +142,11 @@
 ;; while loop.
 (define (continue-exception . _args)
   (error "continued outside while loop"))
+
+(define (illegal-return-exception)
+  (error "illegal return"))
+(define (uncaught-exception-exception)
+  (error "uncaught exception"))
 
 ;; `var-declared?` checks if a variable has been declared in the current
 ;; `state`. The `state` is a list of bindings, each binding being '(var-name
@@ -237,14 +268,44 @@
                     #f)
      state)))
 
+(define (M_state-class name extends body state)
+  (add-var-binding
+   (list
+    name
+    (list
+     (add-state-layer (optional-apply (λ (extends) (get-field-defaults (get-var-value extends state)))
+                                      extends)
+                      (map get-operands ; List of list of bindings for compat with our state functions
+                           (filter (λ (stmt) (eq? (get-operand-1 stmt) 'var)) body)))
+     (M_state-stmt-list
+      (filter
+       (λ (stmt) ; Extract all the methods (and create the function closures via get-initial-state)
+         (eq? (get-expr-symbol stmt) 'static-function))
+       body)
+      (if (null? extends)
+          (get-empty-state)
+          (get-methods (get-var-value extends state) extends))
+      (λ (_value _state) (illegal-return-exception))
+      break-exception
+      continue-exception
+      (λ (_state _exception) (uncaught-exception-exception)))
+     extends ; Extends type
+     ))
+   state))
+
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
 ;; while loop, conditional, and return) and dispatches to the appropriate
 ;; handler. If it's unrecognized, we error.
 (define (M_state-stmt stmt state return break continue except)
   (match (get-expr-symbol stmt)
-    ['var (M_state-decl (get-operands stmt) state return except)]
     ['= (M_state-assign (get-operands stmt) state return except)]
-    ['function
+    ['var (M_state-decl (get-operands stmt) state return except)]
+    ['class
+     (M_state-class (get-operand-1 stmt)
+                    (optional-apply get-operand-1 (get-operand-2 stmt))
+                    (get-operand-3 stmt)
+                    state)]
+    ['static-function
      (M_state-method ;;
       (get-operand-1 stmt)
       (get-operand-2 stmt)
@@ -255,10 +316,10 @@
     ['funcall
      (call/cc (λ (return)
                 (M_state-method-invoke (get-operand-1 stmt)
-                                     state
-                                     (get-casual-params stmt)
-                                     (λ (_result state) (return state))
-                                     except)))]
+                                       state
+                                       (get-casual-params stmt)
+                                       (λ (_result state) (return state))
+                                       except)))]
     ['return (return (M_value (get-operand-1 stmt) state return except) state)]
     ['break (break state)]
     ['continue (continue state)]
@@ -417,6 +478,13 @@
    (M_value (get-operand-1 expr) state return except)
    (M_value (get-operand-2 (append expr (list null))) state return except)))
 
+(define (M_value-instance name state return except)
+  (list name
+        (map (λ (class-fields-layer)
+               (map (λ (binding) (get-evaled-binding binding state return except))
+                    class-fields-layer))
+             (get-field-defaults (get-var-value name state)))))
+
 ;; We use `match-λ` to associate certain symbols with corresponding procedures
 ;; (as a dispatch table) for M_num-ops, M_bool-ops, and M_comp-ops.
 ;;
@@ -469,6 +537,8 @@
          (get-var-value expr state)
          (var-used-before-dec-error expr))]
 
+    [(eq? (get-expr-symbol expr) 'new) (M_value-instance (get-operand-1 expr) state return except)]
+
     ;; Algebraic operations
     [(member (get-expr-symbol expr) '(+ - * / %))
      (M_value-map-then-apply-operator M_num-ops expr state return except)]
@@ -491,10 +561,10 @@
     [(eq? (get-expr-symbol expr) 'methodall)
      (call/cc (λ (return)
                 (M_state-method-invoke (get-operand-1 expr)
-                                     state
-                                     (get-casual-params expr)
-                                     (λ (result _state) (return result))
-                                     except)))]))
+                                       state
+                                       (get-casual-params expr)
+                                       (λ (result _state) (return result))
+                                       except)))]))
 
 ;; `output-remap` sanitizes the output.
 (define (output-remap output)
@@ -510,15 +580,16 @@
 ;;  4. Finally, we remap the final result to a more human-friendly output.
 (define (interpret file class-name)
   (output-remap (call/cc (λ (return)
-                           (M_state-method-invoke (get-entrypoint-name)
-                                                (get-initial-state (parser file))
-                                                (get-entrypoint-params)
-                                                (λ (to-return _state) (return to-return))
-                                                (λ (_state _exception) (error "uncaught except")))))))
+                           (M_state-method-invoke
+                            (get-entrypoint-name)
+                            (get-methods (get-var-value class-name (get-initial-state (parser file))))
+                            (get-entrypoint-params)
+                            (λ (to-return _state) (return to-return))
+                            (λ (_state _exception) (uncaught-exception-exception)))))))
 
 (define (run-interpreter)
   (command-line #:program "interpreter"
                 #:args (file-path [class-name ""])
-                (interpret file-path class-name)))
+                (interpret file-path (string->symbol class-name))))
 
 (run-interpreter)
