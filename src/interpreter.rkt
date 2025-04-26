@@ -4,6 +4,7 @@
 
 #lang racket
 (require racket/cmdline)
+(require racket/trace)
 
 ;; Require the parser from a separate file, "simpleParser.rkt"
 (require "classParser.rkt")
@@ -70,11 +71,17 @@
 (define (get-field-defaults closure)
   (car closure))
 
+(define (get-fields closure)
+  (cadr closure))
+
 (define (get-functions closure)
   (cadr closure))
 
 (define (get-superclass closure)
   (caddr closure))
+
+(define (get-runtime-type closure)
+  (car closure))
 
 ; closure:
 ; (
@@ -177,17 +184,43 @@
 (define (get-pair-where-car-eq lis x)
   (filter (λ (v) (eq? (car v) x)) lis))
 
-;; `get-var-value` returns the stored value for a variable `var` in `state`.
-;; If the variable is not declared or no binding is found, it throws an error.
-(define (get-var-value var state)
+(define (get-active-state state compile-type is-field [this null])
+  (letrec ([locate-accessible-field-region
+            (λ (fields recurse-type)
+              (if (eq? (get-runtime-type this) compile-type)
+                  fields
+                  (locate-accessible-field-region (recursion-tail fields)
+                                                  (get-superclass recurse-type))))]
+           [accessible-method-region
+            (if (null? this)
+                ;; For static function lookups. Note that this includes all layers!
+                (get-functions (get-var-value compile-type state))
+                (filter (λ (binding)
+                          (var-declared? (get-binding-name binding)
+                                         (get-functions (get-var-value compile-type state))))
+                        ;; filter based on whether they are declared in the compile
+                        ;; time type (we only want the ones that are declared in
+                        ;; the compile time type since we are restricting access)
+                        (flatten-state (get-var-value (get-runtime-type this) state))))])
+    (if is-field
+        (locate-accessible-field-region (get-fields this) (get-runtime-type this))
+        accessible-method-region)))
+
+;; `get-var-value` looks up a variable or function value in a state or a closure
+(define (get-var-value var state [is-field null] [compile-type null] [this null])
   ;; Check to see if it is declared, then check to see if it is a pair
-  (if (and (var-declared? var state)
-           (not (null? (unbox (cadar (get-pair-where-car-eq (flatten-state state) var))))))
-      ;; If it is a pair and declared, then return the value
-      (unbox (cadar (get-pair-where-car-eq (flatten-state state)
-                                           var))) ; the car of the cdr of the car is the binding value
-      ;; Otherwise, throw an exception
-      (var-used-before-dec-error var)))
+  (cond
+    [(and (var-declared? var state)
+          (not (null? (unbox (cadar (get-pair-where-car-eq (flatten-state state) var))))))
+     ;; If it is a pair and declared, then return the value
+     [unbox
+      (cadar (get-pair-where-car-eq (flatten-state state)
+                                    var))]] ; the car of the cdr of the car is the binding value
+    ;; If `is-field` is not null that means that we are looking up based on "accessible" fields or methods
+    [(and (not (null? is-field)) (not (null? compile-type)))
+     (get-var-value var (get-active-state state compile-type is-field this))]
+    ;; Otherwise, throw an exception
+    [else (var-used-before-dec-error var)]))
 
 ;; `set-var-binding` updates an existing binding (var, value) in `state`.
 ;; If the <binding> is a single-element list (not a pair), this errors (that is
@@ -281,22 +314,26 @@
                                          this)))
 
 ;; `M_state-function` handles function declarations.
-(define (M_state-function name formal-params body state return except compile-type runtime-type this)
-  (letrec (;; to define the function with access to itself
-           [self
-            (list
-             (prepend 'this formal-params)
-             body
-             (λ (calling-state casual-params)
-               (add-var-bindings
-                (append (prepend 'this formal-params) (list name))
-                (append
-                 (map (λ (param)
-                        (M_value param calling-state return except compile-type runtime-type this))
-                      (prepend runtime-type casual-params))
-                 (list self))
-                (add-state-layer state)))
-             compile-type)])
+(define (M_state-function name state formal-params body return except compile-type runtime-type this)
+  (letrec
+      (;; to define the function with access to itself
+       [self
+        (list
+         (prepend 'this formal-params)
+         body
+         ;; Get env getter:
+         (λ (calling-state casual-params)
+           (add-var-bindings
+            (append (prepend 'this formal-params) (list name))
+            (append (map (λ (param)
+                           (M_value param calling-state return except compile-type runtime-type this))
+                         (prepend runtime-type casual-params))
+                    (list self))
+            ;; (get-latest-scope (reverse calling-state)) gets the global
+            ;; scope (which contains all classes that should be defined,
+            ;; including the class that this function itself is defined in)
+            (add-state-layer (add-state-layer state (get-latest-scope (reverse calling-state))))))
+         compile-type)])
     (M_state-decl (list name self) state return except compile-type runtime-type this #f)))
 
 ;; `M_state-func-invoke` handles function invocations
@@ -307,8 +344,8 @@
                              except
                              compile-type
                              runtime-type
-                             this)
-  (let ([function (get-var-value function-name state)])
+                             (this null))
+  (let ([function (get-var-value function-name state #f compile-type this)])
     (restore-state
      (M_state-block (get-function-body function)
                     ((get-env-getter function) state casual-params)
@@ -365,9 +402,9 @@
     ['static-function
      (M_state-function ;;
       (get-operand-1 stmt)
+      state
       (get-operand-2 stmt)
       (get-operand-3 stmt)
-      state
       return
       except
       compile-type
@@ -785,17 +822,17 @@
 ;;  3. It processes each statement, starting with an empty state (`'()`).
 ;;  4. Finally, we remap the final result to a more human-friendly output.
 (define (interpret file class-name)
-  (output-remap (call/cc (λ (return)
-                           (M_state-func-invoke
-                            (get-entrypoint-name)
-                            (get-functions (get-var-value class-name
-                                                          (get-initial-state (parser file))))
-                            (get-entrypoint-params)
-                            (λ (to-return _state) (return to-return))
-                            (λ (_state _exception) (uncaught-exception-exception))
-                            null
-                            null
-                            null)))))
+  (output-remap
+   (call/cc (λ (return)
+              (M_state-func-invoke
+               (get-entrypoint-name)
+               (get-initial-state (parser file)) ; The state with all of the top level classes in it
+               (get-entrypoint-params)
+               (λ (to-return _state) (return to-return))
+               (λ (_state _exception) (uncaught-exception-exception))
+               class-name
+               null
+               null)))))
 
 (define (run-interpreter)
   (command-line #:program "interpreter"
