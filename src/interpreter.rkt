@@ -25,7 +25,7 @@
 ;; Get the head of the stuff
 (define recursion-head car)
 
-;; Get the function's casual params (actual params)
+;; Get the method's casual params (actual params)
 (define get-casual-params cddr)
 
 ;; The params for the entrypoint
@@ -62,15 +62,18 @@
 ; closure:
 ; (
 ;   <formal param list>,
-;   <function body>,
-;   <function that creates env>
+;   <method body>,
+;   <method that creates env>
 ; )
 
-;; `get-func-body` gets the function body from the closure
-(define get-func-body cadr)
+;; `get-method-body` gets the method body from the closure
+(define get-method-body cadr)
 
-;; `get-env-getter` gets the environment creation function from the closure
+;; `get-env-getter` gets the environment creation method from the closure
 (define get-env-getter caddr)
+
+;; `get-static-type` gets the static class associated with the method
+(define get-static-type cadddr)
 
 ;; `get-initial-state` returns the initial state for the interpreter, which
 ;; includes all of the "global" declarations
@@ -123,7 +126,7 @@
 
 ;; `var-declared-in-scope?` checks if a variable has been declared in the current
 ;; scope represented by `state`. The `state` is a list of bindings, where each binding
-;; is structured as '(var-name value). This function uses `index-where` to search
+;; is structured as '(var-name value). This method uses `index-where` to search
 ;; through the flattened state to find the index of the binding for the specified `var`.
 ;; If `index-where` returns a number, it indicates the variable is declared in the current scope.
 (define (var-declared-in-scope? var state)
@@ -207,9 +210,9 @@
                                          (λ (state exception)
                                            (except (get-earlier-scopes state) exception)))))
 
-;; `M_state-func` handles function declarations.
-(define (M_state-func name formal-params body state return except)
-  (letrec (;; to define the function with access to itself
+;; `M_state-method` handles method declarations.
+(define (M_state-method name formal-params body state return except)
+  (letrec (;; to define the method with access to itself
            [self (list formal-params
                        body
                        (λ (calling-state casual-params)
@@ -221,12 +224,12 @@
                                            (add-state-layer state))))])
     (M_state-decl (list name self) state return except #f)))
 
-;; `M_state-func-invoke` handles function invocations
-(define (M_state-func-invoke function-name state casual-params return except)
-  (let ([function (get-var-value function-name state)])
+;; `M_state-method-invoke` handles method invocations
+(define (M_state-method-invoke method-name state casual-params return except)
+  (let ([method (get-var-value method-name state)])
     (restore-state
-     (M_state-block (get-func-body function)
-                    ((get-env-getter function) state casual-params)
+     (M_state-block (get-method-body method)
+                    ((get-env-getter method) state casual-params)
                     (λ (to-return new-state) (return to-return (restore-state new-state state)))
                     break-exception
                     continue-exception
@@ -242,7 +245,7 @@
     ['var (M_state-decl (get-operands stmt) state return except)]
     ['= (M_state-assign (get-operands stmt) state return except)]
     ['function
-     (M_state-func ;;
+     (M_state-method ;;
       (get-operand-1 stmt)
       (get-operand-2 stmt)
       (get-operand-3 stmt)
@@ -251,7 +254,7 @@
       except)]
     ['funcall
      (call/cc (λ (return)
-                (M_state-func-invoke (get-operand-1 stmt)
+                (M_state-method-invoke (get-operand-1 stmt)
                                      state
                                      (get-casual-params stmt)
                                      (λ (_result state) (return state))
@@ -300,8 +303,8 @@
   (letrec ([call-with-finally (λ (state)
                                 (M_state-finally finally-stmt state return break continue except))]
            [return-with-finally (λ (to-return state) (return to-return (call-with-finally state)))]
-           [jump-with-finally (λ (func)
-                                (λ (state . args) (apply func (call-with-finally state) args)))])
+           [jump-with-finally (λ (method)
+                                (λ (state . args) (apply method (call-with-finally state) args)))])
     (M_state-finally
      finally-stmt ;; Finally statement
      (call/cc
@@ -405,12 +408,12 @@
     [else state]))
 
 ;; `M_value-map-then-apply-operator` is a small helper that:
-;;  1. Gets the appropriate operator procedure from `op_func_getter`.
+;;  1. Gets the appropriate operator procedure from `op_method_getter`.
 ;;  2. Evaluates each of the operands using `M_value` to ensure they are fully
-;;     processed and ready for use by the operator function.
+;;     processed and ready for use by the operator method.
 ;;  3. Applies the operator to those mapped results.
-(define (M_value-map-then-apply-operator op_func_getter expr state return except)
-  ((op_func_getter (get-expr-symbol expr))
+(define (M_value-map-then-apply-operator op_method_getter expr state return except)
+  ((op_method_getter (get-expr-symbol expr))
    (M_value (get-operand-1 expr) state return except)
    (M_value (get-operand-2 (append expr (list null))) state return except)))
 
@@ -481,13 +484,13 @@
     [(member (get-expr-symbol expr) '(&& || !))
      (M_value-map-then-apply-operator M_bool-ops expr state return except)]
 
-    ;; `M_value-match-helper` should always call its func with two "evaluated"
+    ;; `M_value-match-helper` should always call its method with two "evaluated"
     ;; arguments, so we return null if we are given null (and stop recursing)
     ;; to allow for our two-argument ! (negation).
     ;; Functions
-    [(eq? (get-expr-symbol expr) 'funcall)
+    [(eq? (get-expr-symbol expr) 'methodall)
      (call/cc (λ (return)
-                (M_state-func-invoke (get-operand-1 expr)
+                (M_state-method-invoke (get-operand-1 expr)
                                      state
                                      (get-casual-params expr)
                                      (λ (result _state) (return result))
@@ -500,14 +503,14 @@
     [#f 'false]
     [_ output]))
 
-;; `interpret` is the main function:
+;; `interpret` is the main method:
 ;;  1. It parses the input file (or string) into a list of statements using `parser`.
 ;;  2. It calls `call/cc` to capture a continuation `breaker` used to exit early upon 'return'.
 ;;  3. It processes each statement, starting with an empty state (`'()`).
 ;;  4. Finally, we remap the final result to a more human-friendly output.
-(define (interpret file)
+(define (interpret file class-name)
   (output-remap (call/cc (λ (return)
-                           (M_state-func-invoke (get-entrypoint-name)
+                           (M_state-method-invoke (get-entrypoint-name)
                                                 (get-initial-state (parser file))
                                                 (get-entrypoint-params)
                                                 (λ (to-return _state) (return to-return))
@@ -516,6 +519,6 @@
 (define (run-interpreter)
   (command-line #:program "interpreter"
                 #:args (file-path [class-name ""])
-                (interpret file-path))) ;;class-name
+                (interpret file-path class-name)))
 
 (run-interpreter)
