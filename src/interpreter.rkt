@@ -106,6 +106,7 @@
                      continue-exception
                      (λ (_state _exception) (uncaught-exception-exception))
                      null
+                     null
                      null))
 
 ;; `get-binding-unevaluated-value` gets the unevaluated expression list that is
@@ -113,10 +114,15 @@
 (define (get-binding-unevaluated-value binding)
   (cadr binding))
 
-(define (get-evaled-binding binding state return except compile-type runtime-type)
-  (list
-   (get-binding-name binding)
-   ((M_value (get-binding-unevaluated-value binding) state return except compile-type runtime-type))))
+(define (get-evaled-binding binding state return except compile-type runtime-type this)
+  (list (get-binding-name binding)
+        ((M_value (get-binding-unevaluated-value binding)
+                  state
+                  return
+                  except
+                  compile-type
+                  runtime-type
+                  this))))
 
 ;; `get-binding-name` gets the name of a binding pair, which is its car.
 (define get-binding-name car)
@@ -220,7 +226,15 @@
 ;; `M_state-stmt-list` processes a list of statements. If we run out of
 ;; statements, return the final `state`. Otherwise, evaluate the first
 ;; statement and recurse.
-(define (M_state-stmt-list stmt-list state return break continue except compile-type runtime-type)
+(define (M_state-stmt-list stmt-list
+                           state
+                           return
+                           break
+                           continue
+                           except
+                           compile-type
+                           runtime-type
+                           this)
   (if (null? stmt-list)
       state
       (M_state-stmt-list (recursion-tail stmt-list) ;;
@@ -231,13 +245,15 @@
                                        continue
                                        except
                                        compile-type
-                                       runtime-type)
+                                       runtime-type
+                                       this)
                          return
                          break
                          continue
                          except
                          compile-type
-                         runtime-type)))
+                         runtime-type
+                         this)))
 
 ;; `M_state-block` adds a new layer to the `state` and processes a block of
 ;; statements.
@@ -249,6 +265,7 @@
                        except
                        compile-type
                        runtime-type
+                       this
                        (push-new-state-level #t))
   (get-earlier-scopes (M_state-stmt-list stmt-list
                                          (if push-new-state-level
@@ -260,24 +277,27 @@
                                          (λ (state exception)
                                            (except (get-earlier-scopes state) exception))
                                          compile-type
-                                         runtime-type)))
+                                         runtime-type
+                                         this)))
 
 ;; `M_state-function` handles function declarations.
-(define (M_state-function name formal-params body state return except compile-type runtime-type)
+(define (M_state-function name formal-params body state return except compile-type runtime-type this)
   (letrec (;; to define the function with access to itself
            [self
             (list
-             formal-params
+             (prepend 'this formal-params)
              body
              (λ (calling-state casual-params)
                (add-var-bindings
-                (append formal-params (list name))
-                (append (map (λ (param)
-                               (M_value param calling-state return except compile-type runtime-type))
-                             casual-params)
-                        (list self))
-                (add-state-layer state))))])
-    (M_state-decl (list name self) state return except compile-type runtime-type #f)))
+                (append (prepend 'this formal-params) (list name))
+                (append
+                 (map (λ (param)
+                        (M_value param calling-state return except compile-type runtime-type this))
+                      (prepend runtime-type casual-params))
+                 (list self))
+                (add-state-layer state)))
+             compile-type)])
+    (M_state-decl (list name self) state return except compile-type runtime-type this #f)))
 
 ;; `M_state-func-invoke` handles function invocations
 (define (M_state-func-invoke function-name
@@ -286,7 +306,8 @@
                              return
                              except
                              compile-type
-                             runtime-type)
+                             runtime-type
+                             this)
   (let ([function (get-var-value function-name state)])
     (restore-state
      (M_state-block (get-function-body function)
@@ -297,6 +318,7 @@
                     (λ (new-state exception) (except (restore-state new-state state) exception))
                     compile-type
                     runtime-type
+                    this
                     #f)
      state)))
 
@@ -322,6 +344,7 @@
       continue-exception
       (λ (_state _exception) (uncaught-exception-exception))
       null
+      null
       null)
      extends ; Extends type
      ))
@@ -330,10 +353,10 @@
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
 ;; while loop, conditional, and return) and dispatches to the appropriate
 ;; handler. If it's unrecognized, we error.
-(define (M_state-stmt stmt state return break continue except compile-type runtime-type)
+(define (M_state-stmt stmt state return break continue except compile-type runtime-type this)
   (match (get-expr-symbol stmt)
-    ['= (M_state-assign (get-operands stmt) state return except compile-type runtime-type)]
-    ['var (M_state-decl (get-operands stmt) state return except compile-type runtime-type)]
+    ['= (M_state-assign (get-operands stmt) state return except compile-type runtime-type this)]
+    ['var (M_state-decl (get-operands stmt) state return except compile-type runtime-type this)]
     ['class
      (M_state-class (get-operand-1 stmt)
                     (optional-apply get-operand-1 (get-operand-2 stmt))
@@ -348,26 +371,38 @@
       return
       except
       compile-type
-      runtime-type)]
+      runtime-type
+      this)]
     ['funcall
-     (call/cc (λ (return)
-                (M_state-func-invoke (get-operand-1 stmt)
-                                     state
-                                     (get-casual-params stmt)
-                                     (λ (_result state) (return state))
-                                     except
-                                     compile-type
-                                     runtime-type)))]
+     (if (eq? (get-expr-symbol (get-operand-1 stmt) 'dot))
+         (M_state-func-invoke (get-operand-2 (get-operand-1 stmt))
+                              state
+                              (get-casual-params stmt)
+                              (λ (_result state) (return state))
+                              except
+                              compile-type
+                              runtime-type
+                              (get-operand-1 (get-operand-1 stmt)))
+         (call/cc (λ (return)
+                    (M_state-func-invoke (get-operand-1 stmt)
+                                         state
+                                         (get-casual-params stmt)
+                                         (λ (_result state) (return state))
+                                         except
+                                         compile-type
+                                         runtime-type
+                                         this))))]
     ['return
-     (return (M_value (get-operand-1 stmt) state return except compile-type runtime-type) state)]
+     (return (M_value (get-operand-1 stmt) state return except compile-type runtime-type this) state)]
     ['break (break state)]
     ['continue (continue state)]
     ['while
-     (call/cc (λ (break)
-                (M_state-while stmt state return break continue except compile-type runtime-type)))]
-    ['if (M_state-if stmt state return break continue except compile-type runtime-type)]
+     (call/cc
+      (λ (break)
+        (M_state-while stmt state return break continue except compile-type runtime-type this)))]
+    ['if (M_state-if stmt state return break continue except compile-type runtime-type this)]
     ['throw
-     (except state (M_value (get-operand-1 stmt) state return except compile-type runtime-type))]
+     (except state (M_value (get-operand-1 stmt) state return except compile-type runtime-type this))]
     ['try
      (M_state-try (get-operand-1 stmt)
                   (get-operand-2 stmt)
@@ -378,8 +413,10 @@
                   continue
                   except
                   compile-type
-                  runtime-type)]
-    ['begin (M_state-block (cdr stmt) state return break continue except compile-type runtime-type)]
+                  runtime-type
+                  this)]
+    ['begin
+     (M_state-block (cdr stmt) state return break continue except compile-type runtime-type this)]
     [_ (error "invalid statement type")]))
 
 ;; `M_state-decl` handles variable declarations.
@@ -390,7 +427,7 @@
 ;;     empty list) just store the binding as (var null)).
 ;;  3. If there is an initial value, evaluate it and store that in the new
 ;;     state.
-(define (M_state-decl binding state return except compile-type runtime-type (evaluate #t))
+(define (M_state-decl binding state return except compile-type runtime-type this (evaluate #t))
   (cond
     [(var-declared-in-scope? (get-binding-name binding) state)
      (error (string-append "variable redeclared: " (~a (get-binding-name binding))))]
@@ -402,7 +439,8 @@
                                      return
                                      except
                                      compile-type
-                                     runtime-type))
+                                     runtime-type
+                                     this))
                       state)]
     [else (add-var-binding binding state)]))
 
@@ -418,7 +456,8 @@
                      continue
                      except
                      compile-type
-                     runtime-type)
+                     runtime-type
+                     this)
   (letrec ([call-with-finally (λ (state)
                                 (M_state-finally finally-stmt
                                                  state
@@ -427,7 +466,8 @@
                                                  continue
                                                  except
                                                  compile-type
-                                                 runtime-type))]
+                                                 runtime-type
+                                                 this))]
            [return-with-finally (λ (to-return state) (return to-return (call-with-finally state)))]
            [jump-with-finally (λ (function)
                                 (λ (state . args) (apply function (call-with-finally state) args)))])
@@ -454,15 +494,18 @@
                                     (jump-with-finally except)
                                     exception
                                     compile-type
-                                    runtime-type))))
+                                    runtime-type
+                                    this))))
          compile-type
-         runtime-type)))
+         runtime-type
+         this)))
      return
      break
      continue
      except
      compile-type
-     runtime-type)))
+     runtime-type
+     this)))
 
 (define (M_state-catch
          stmt ; could be '()' or 'catch (e) {}'
@@ -474,7 +517,8 @@
          ;; if the catch is emtpy or it errors again then we want to propagate the exception
          exception
          compile-type
-         runtime-type)
+         runtime-type
+         this)
   (if (null? stmt)
       (except state exception) ;; if there is no catch then we propagate the exception
       (M_state-block (get-operand-2 stmt)
@@ -486,9 +530,10 @@
                      except
                      compile-type
                      runtime-type
+                     this
                      #f)))
 
-(define (M_state-finally stmt state return break continue except compile-type runtime-type)
+(define (M_state-finally stmt state return break continue except compile-type runtime-type this)
   (if (null? stmt)
       state
       (M_state-block (get-operand-1 stmt)
@@ -498,7 +543,8 @@
                      continue
                      except
                      compile-type
-                     runtime-type)))
+                     runtime-type
+                     this)))
 
 ;; `M_state-assign` handles variable assignments.
 ;;
@@ -506,7 +552,7 @@
 ;;  1. If the var is declared, evaluate the expression and return the new
 ;;     state.
 ;;  2. Otherwise, error about an undeclared variable.
-(define (M_state-assign binding state return except compile-type runtime-type)
+(define (M_state-assign binding state return except compile-type runtime-type this)
   (if (var-declared? (get-binding-name binding) state)
       (set-var-binding! (list (get-binding-name binding)
                               (M_value (get-binding-unevaluated-value binding)
@@ -514,7 +560,8 @@
                                        return
                                        except
                                        compile-type
-                                       runtime-type))
+                                       runtime-type
+                                       this))
                         state)
       (var-used-before-dec-error (get-binding-name binding))))
 
@@ -524,8 +571,8 @@
 ;;  1. Evaluate the condition (cadr).
 ;;  2. If true, execute the body (caddr) and loop again.
 ;;  3. If false, return the state as-is (loop ends).
-(define (M_state-while while-stmt state return break continue except compile-type runtime-type)
-  (if (M_value (cadr while-stmt) state return except compile-type runtime-type)
+(define (M_state-while while-stmt state return break continue except compile-type runtime-type this)
+  (if (M_value (cadr while-stmt) state return except compile-type runtime-type this)
       (M_state-while while-stmt
                      (call/cc (λ (continue)
                                 (M_state-stmt (get-operand-2 while-stmt)
@@ -535,13 +582,15 @@
                                               continue
                                               except
                                               compile-type
-                                              runtime-type)))
+                                              runtime-type
+                                              this)))
                      return
                      break
                      continue
                      except
                      compile-type
-                     runtime-type)
+                     runtime-type
+                     this)
       state))
 
 ;; `contains-else?` checks if an if statement has an else branch.`
@@ -555,9 +604,9 @@
 ;;  2. If true, evaluate and return the state after the "then" branch (caddr).
 ;;  3. Else if there's an else branch (length is 4), evaluate "else" branch (cadddr).
 ;;  4. Otherwise, do nothing and return state.
-(define (M_state-if if-stmt state return break continue except compile-type runtime-type)
+(define (M_state-if if-stmt state return break continue except compile-type runtime-type this)
   (cond
-    [(M_value (get-operand-1 if-stmt) state return except compile-type runtime-type)
+    [(M_value (get-operand-1 if-stmt) state return except compile-type runtime-type this)
      (M_state-stmt (get-operand-2 if-stmt)
                    state
                    return
@@ -565,7 +614,8 @@
                    continue
                    except
                    compile-type
-                   runtime-type)]
+                   runtime-type
+                   this)]
     [(contains-else? if-stmt)
      (M_state-stmt (get-operand-3 if-stmt)
                    state
@@ -574,7 +624,8 @@
                    continue
                    except
                    compile-type
-                   runtime-type)]
+                   runtime-type
+                   this)]
     [else state]))
 
 ;; `M_value-map-then-apply-operator` is a small helper that:
@@ -588,16 +639,23 @@
                                          return
                                          except
                                          compile-type
-                                         runtime-type)
+                                         runtime-type
+                                         this)
   ((op_function_getter (get-expr-symbol expr))
-   (M_value (get-operand-1 expr) state return except compile-type runtime-type)
-   (M_value (get-operand-2 (append expr (list null))) state return except compile-type runtime-type)))
+   (M_value (get-operand-1 expr) state return except compile-type runtime-type this)
+   (M_value (get-operand-2 (append expr (list null)))
+            state
+            return
+            except
+            compile-type
+            runtime-type
+            this)))
 
-(define (M_value-instance name state return except compile-type runtime-type)
+(define (M_value-instance name state return except compile-type runtime-type this)
   (list name
         (map (λ (class-fields-layer)
                (map (λ (binding)
-                      (get-evaled-binding binding state return except compile-type runtime-type))
+                      (get-evaled-binding binding state return except compile-type runtime-type this))
                     class-fields-layer))
              (get-field-defaults (get-var-value name state)))))
 
@@ -635,7 +693,7 @@
            ['>= >=]))
 
 ;; `M_value` evaluates an expression with respect to the given `state`.
-(define (M_value expr state return except compile-type runtime-type)
+(define (M_value expr state return except compile-type runtime-type this)
   (cond
     ;; Booleans
     [(eq? expr 'true) #t]
@@ -654,22 +712,50 @@
          (var-used-before-dec-error expr))]
 
     [(eq? (get-expr-symbol expr) 'new)
-     (M_value-instance (get-operand-1 expr) state return except compile-type runtime-type)]
+     (M_value-instance (get-operand-1 expr) state return except compile-type runtime-type this)]
 
     ;; Algebraic operations
     [(member (get-expr-symbol expr) '(+ - * / %))
-     (M_value-map-then-apply-operator M_num-ops expr state return except compile-type runtime-type)]
+     (M_value-map-then-apply-operator M_num-ops
+                                      expr
+                                      state
+                                      return
+                                      except
+                                      compile-type
+                                      runtime-type
+                                      this)]
 
     ;; Comparison operations
     [(member (get-expr-symbol expr) '(== !=))
-     (M_value-map-then-apply-operator M_comp-ops expr state return except compile-type runtime-type)]
+     (M_value-map-then-apply-operator M_comp-ops
+                                      expr
+                                      state
+                                      return
+                                      except
+                                      compile-type
+                                      runtime-type
+                                      this)]
 
     [(member (get-expr-symbol expr) '(>= <= < >))
-     (M_value-map-then-apply-operator M_comp-ops expr state return except compile-type runtime-type)]
+     (M_value-map-then-apply-operator M_comp-ops
+                                      expr
+                                      state
+                                      return
+                                      except
+                                      compile-type
+                                      runtime-type
+                                      this)]
 
     ;; Boolean operations
     [(member (get-expr-symbol expr) '(&& || !))
-     (M_value-map-then-apply-operator M_bool-ops expr state return except compile-type runtime-type)]
+     (M_value-map-then-apply-operator M_bool-ops
+                                      expr
+                                      state
+                                      return
+                                      except
+                                      compile-type
+                                      runtime-type
+                                      this)]
 
     ;; `M_value-match-helper` should always call its function with two "evaluated"
     ;; arguments, so we return null if we are given null (and stop recursing)
@@ -681,7 +767,10 @@
                                      state
                                      (get-casual-params expr)
                                      (λ (result _state) (return result))
-                                     except)))]))
+                                     except
+                                     null
+                                     null
+                                     null)))]))
 
 ;; `output-remap` sanitizes the output.
 (define (output-remap output)
@@ -704,6 +793,7 @@
                             (get-entrypoint-params)
                             (λ (to-return _state) (return to-return))
                             (λ (_state _exception) (uncaught-exception-exception))
+                            null
                             null
                             null)))))
 
