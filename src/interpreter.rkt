@@ -194,15 +194,16 @@
            [accessible-method-region
             (if (null? this)
                 ;; For static function lookups. Note that this includes all layers!
-                (get-functions (get-var-value compile-type state))
+                (get-functions (get-var-value compile-type state is-field))
+
                 (filter (λ (binding)
                           (var-declared? (get-binding-name binding)
-                                         (get-functions (get-var-value compile-type state))))
+                                         (get-functions (get-var-value compile-type state is-field))))
                         ;; filter based on whether they are declared in the compile
                         ;; time type (we only want the ones that are declared in
                         ;; the compile time type since we are restricting access)
                         (flatten-state ;;
-                         (get-functions (get-var-value (get-runtime-type this) state)))))])
+                         (get-functions (get-var-value (get-runtime-type this) state is-field)))))])
     (if is-field
         (locate-accessible-field-region (get-fields this) (get-runtime-type this))
         accessible-method-region)))
@@ -218,8 +219,10 @@
       (cadar (get-pair-where-car-eq (flatten-state state)
                                     var))]] ; the car of the cdr of the car is the binding value
     ;; If `is-field` is not null that means that we are looking up based on "accessible" fields or methods
-    [(and (not (null? is-field)) (not (null? compile-type)))
-     (get-var-value var (get-active-state state compile-type is-field this))]
+    [(and (not (null? compile-type)) (not (null? is-field)))
+     (if (not is-field)
+         (get-var-value var (get-functions (get-var-value compile-type state)))
+         (get-var-value var (get-fields this)))]
     ;; Otherwise, throw an exception
     [else (var-used-before-dec-error var)]))
 
@@ -236,48 +239,61 @@
 ;;   directly set the field value in the closure associated with with
 ;;   instance-name.
 ;; - If `instance-name` and `this` are passed we will ONLY consider the instance.
+
 (define (set-var-binding! binding state (compile-type null) (this null) (instance-name null))
-  (if (null? instance-name)
-      (cond
-        ;; we've recursed through all scopes without finding the variable
-        [(null? state)
-         (if (not (null? this))
-             ;; If we reach the base case where we could not find the variable
-             ;; binding in any of the the scope layers then we can check to see if
-             ;; it is in a visible region of the instance closure and if it is then
-             ;; recurse and set it there. We omit `this` and `instance` in the
-             ;; recursive call to prevent infinite recursion.
-             (begin
-               (set-var-binding! binding (get-active-state state compile-type #t this) compile-type)
-               state)
-             (error (string-append "variable not declared: " (~a (get-binding-name binding)))))]
-        [(var-declared? (get-binding-name binding) (list (get-latest-scope state)))
-         (begin
-           (set-box! (cadar (get-pair-where-car-eq (get-latest-scope state)
-                                                   (get-binding-name binding)))
-                     (get-binding-unevaluated-value binding))
-           state)]
-        [else (cons (get-latest-scope state) (set-var-binding! binding (get-earlier-scopes state)))])
-      ;; There is no restricting of what we have access to when we are directly
-      ;; setting a property of instance, because there is no way to cast in our
-      ;; language (it is impossible to narrow other than function calls, and
-      ;; this is a field assignment)
-      (cond
-        [;; If using this.foo we DO want to restrict to the compile time type
-         (eq? compile-type 'this)
-         (begin
-           (set-var-binding! binding (get-active-state state compile-type #t this) compile-type)
-           state)]
-        [else
-         (begin
-           (set-var-binding! binding (get-fields (get-var-value instance-name state)))
-           state)])))
+  (letrec
+      ([set-var-binding-helper!
+        (λ (binding recurse-state original-state (compile-type null) (this null) (instance-name null))
+          (if (null? instance-name)
+              (cond
+                ;; we've recursed through all scopes without finding the variable
+                [(null? recurse-state)
+                 (if (not (null? this))
+                     ;; If we reach the base case where we could not find the variable
+                     ;; binding in any of the the scope layers then we can check to see if
+                     ;; it is in a visible region of the instance closure and if it is then
+                     ;; recurse and set it there. We omit `this` and `instance` in the
+                     ;; recursive call to prevent infinite recursion.
+                     (begin
+                       ;; Directly access the fields of 'this' instead of going through get-active-state
+                       (set-var-binding-helper! binding (get-fields this) original-state compile-type)
+                       original-state)
+                     (error (string-append "variable not declared: "
+                                           (~a (get-binding-name binding)))))]
+                [(var-declared? (get-binding-name binding) (list (get-latest-scope recurse-state)))
+                 (begin
+                   (set-box! (cadar (get-pair-where-car-eq (get-latest-scope recurse-state)
+                                                           (get-binding-name binding)))
+                             (get-binding-unevaluated-value binding))
+                   original-state)]
+                [else
+                 (begin
+                   (set-var-binding-helper! binding (get-earlier-scopes recurse-state) original-state)
+                   original-state)])
+              ;; There is no restricting of what we have access to when we are directly
+              ;; setting a property of instance, because there is no way to cast in our
+              ;; language (it is impossible to narrow other than function calls, and
+              ;; this is a field assignment)
+              (cond
+                [;; If using this.foo we DO want to restrict to the compile time type
+                 (eq? instance-name 'this)
+                 (begin
+                   ;; Directly use the fields of 'this' instead of going through get-active-state
+                   (set-var-binding-helper! binding (get-fields this) original-state compile-type)
+                   original-state)]
+                [else
+                 (begin
+                   (set-var-binding-helper! binding
+                                            (get-fields (get-var-value instance-name original-state))
+                                            original-state)
+                   original-state)])))])
+    (set-var-binding-helper! binding state state compile-type this instance-name)))
 
 ;; `add-var-bindings` zips and adds many bindings to the state.
 (define (add-var-bindings keys values state (error-message "keys.length != values.length"))
   (cond
     [(and (null? keys) (null? values)) state]
-    [(xor (null? keys) (null? values)) (raise error-message)]
+    [(xor (null? keys) (null? values)) (error error-message)]
     [else
      (add-var-bindings (recursion-tail keys)
                        (recursion-tail values)
@@ -350,27 +366,45 @@
                                          this)))
 
 ;; `M_state-function` handles function declarations.
-(define (M_state-function name state formal-params body return except compile-type runtime-type this)
-  (letrec (;; to define the function with access to itself
-           [self
-            (list
-             (prepend 'this formal-params) ; formal params
-             body
-             ;; Get env getter:
-             (λ (calling-state casual-params this)
-               (add-var-bindings
-                (append (prepend 'this formal-params) (list name))
-                (append
-                 (map (λ (param)
-                        (M_value param calling-state return except compile-type runtime-type this))
-                      (prepend this casual-params))
-                 (list self))
-                ;; (get-latest-scope (reverse calling-state)) gets the global
-                ;; scope (which contains all classes that should be defined,
-                ;; including the class that this function itself is defined in)
-                (add-state-layer (add-state-layer state (get-latest-scope (reverse calling-state))))))
-             compile-type)])
-    (M_state-decl (list name self) state return except compile-type runtime-type this #f)))
+(define (M_state-function name
+                          state
+                          formal-params
+                          body
+                          return
+                          except
+                          compile-type
+                          runtime-type
+                          decl-this)
+  (letrec
+      (;; to define the function with access to itself
+       [self
+        (list
+         (prepend 'this formal-params) ; formal params
+         body
+         ;; Get env getter:
+         (λ (calling-state casual-params current-this compile-type runtime-type)
+           (add-var-bindings
+            (append (prepend 'this (prepend 'super formal-params)) (list name))
+            (append
+             (map
+              (λ (param)
+                (M_value param calling-state return except compile-type runtime-type current-this))
+              (prepend current-this
+                       (prepend (get-var-value
+                                 (begin
+                                   (printf
+                                   (~a (get-superclass (get-var-value compile-type calling-state))))
+
+                                       (get-superclass (get-var-value compile-type calling-state)))
+                                 calling-state)
+                                casual-params)))
+             (list self))
+            ;; (get-latest-scope (reverse calling-state)) gets the global
+            ;; scope (which contains all classes that should be defined,
+            ;; including the class that this function itself is defined in)
+            (add-state-layer (add-state-layer state (get-latest-scope (reverse calling-state))))))
+         compile-type)])
+    (M_state-decl (list name self) state return except compile-type runtime-type decl-this #f)))
 
 ;; `M_state-func-invoke` handles function invocations
 (define (M_state-func-invoke function-name
@@ -384,7 +418,7 @@
   (let ([function (get-var-value function-name state #f compile-type this)])
     (restore-state
      (M_state-block (get-function-body function)
-                    ((get-env-getter function) state casual-params this)
+                    ((get-env-getter function) state casual-params this compile-type runtime-type)
                     (λ (to-return new-state) (return to-return (restore-state new-state state)))
                     break-exception
                     continue-exception
@@ -411,7 +445,9 @@
        body)
       (if (null? extends)
           (get-empty-state)
-          (get-functions (get-var-value extends state))) ;; TODO what was extends doing here
+
+          (add-state-layer (get-functions (get-var-value extends
+                                                         state)))) ;; TODO what was extends doing here
       (λ (_value _state) (illegal-return-exception))
       break-exception
       continue-exception
@@ -419,7 +455,9 @@
       null
       null
       null)
-     extends ; Extends type
+    (begin (printf (~a extends)) extends)
+
+     ; Extends type
      ))
    state))
 
@@ -457,7 +495,9 @@
                                          except
                                          compile-type
                                          runtime-type
-                                         (get-var-value (get-operand-1 (get-operand-1 stmt)) state))
+                                         (get-var-value (get-operand-1 (get-operand-1 stmt))
+                                                        state)) ; this
+
                     (M_state-func-invoke (get-operand-1 stmt)
                                          state
                                          (get-casual-params stmt)
@@ -630,7 +670,7 @@
 ;; (define (set-var-binding! binding state (compile-type null) (this null) (instance-name null))
 (define (M_state-assign binding state return except compile-type runtime-type this)
   (if (list? (get-binding-name binding))
-      ;; The case where we have (dot (bar buzz))
+      ;; The case where we have (dot bar buzz)
       (set-var-binding! (list (get-operand-2 (get-binding-name binding))
                               (M_value (get-binding-unevaluated-value binding)
                                        state
@@ -750,6 +790,7 @@
                       (get-evaled-binding binding state return except compile-type runtime-type this))
                     class-fields-layer))
              (get-field-defaults (get-var-value name state)))))
+
 ;; We use `match-λ` to associate certain symbols with corresponding procedures
 ;; (as a dispatch table) for M_num-ops, M_bool-ops, and M_comp-ops.
 ;;
@@ -865,24 +906,39 @@
     ;; Functions
     [(eq? (get-expr-symbol expr) 'funcall)
      ;; checking for dot operator that looks like (funcall (dot instance method))
-     (call/cc (λ (return)
-                (if (list? (get-operand-1 expr))
-                    (M_state-func-invoke (get-operand-2 (get-operand-1 expr))
-                                         state
-                                         (get-casual-params expr)
-                                         (λ (result _state) (return result))
-                                         except
-                                         compile-type
-                                         runtime-type
-                                         (get-operand-1 (get-operand-1 expr)))
-                    (M_state-func-invoke (get-operand-1 expr)
-                                         state
-                                         (get-casual-params expr)
-                                         (λ (result _state) (return result))
-                                         except
-                                         compile-type
-                                         runtime-type
-                                         this))))]))
+     (call/cc
+      (λ (return)
+        (if (list? (get-operand-1 expr))
+            (M_state-func-invoke (get-operand-2 (get-operand-1 expr))
+                                 state
+                                 (get-casual-params expr)
+                                 (λ (result _state) (return result))
+                                 except
+                                 ;; TODO: this should be compile type not runtime type
+                                 (get-runtime-type (M_value (get-operand-1 (get-operand-1 expr))
+                                                            state
+                                                            return
+                                                            except
+                                                            compile-type
+                                                            runtime-type
+                                                            this))
+                                 runtime-type
+                                 (M_value (get-operand-1 (get-operand-1 expr))
+                                          state
+                                          return
+                                          except
+                                          compile-type
+                                          runtime-type
+                                          this))
+            (M_state-func-invoke (get-operand-1 expr)
+                                 state
+                                 (get-casual-params expr)
+                                 (λ (result _state) (return result))
+                                 except
+                                 compile-type
+                                 runtime-type
+                                 this))))]
+    [else expr]))
 
 ;; `output-remap` sanitizes the output.
 (define (output-remap output)
