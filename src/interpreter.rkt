@@ -123,13 +123,13 @@
 
 (define (get-evaled-binding binding state return except compile-type runtime-type this)
   (list (get-binding-name binding)
-        ((M_value (get-binding-unevaluated-value binding)
-                  state
-                  return
-                  except
-                  compile-type
-                  runtime-type
-                  this))))
+        (box (M_value (get-binding-unevaluated-value binding)
+                      state
+                      return
+                      except
+                      compile-type
+                      runtime-type
+                      this))))
 
 ;; `get-binding-name` gets the name of a binding pair, which is its car.
 (define get-binding-name car)
@@ -315,25 +315,25 @@
 
 ;; `M_state-function` handles function declarations.
 (define (M_state-function name state formal-params body return except compile-type runtime-type this)
-  (letrec
-      (;; to define the function with access to itself
-       [self
-        (list
-         (prepend 'this formal-params)
-         body
-         ;; Get env getter:
-         (λ (calling-state casual-params)
-           (add-var-bindings
-            (append (prepend 'this formal-params) (list name))
-            (append (map (λ (param)
-                           (M_value param calling-state return except compile-type runtime-type this))
-                         (prepend runtime-type casual-params))
-                    (list self))
-            ;; (get-latest-scope (reverse calling-state)) gets the global
-            ;; scope (which contains all classes that should be defined,
-            ;; including the class that this function itself is defined in)
-            (add-state-layer (add-state-layer state (get-latest-scope (reverse calling-state))))))
-         compile-type)])
+  (letrec (;; to define the function with access to itself
+           [self
+            (list
+             (prepend 'this formal-params)
+             body
+             ;; Get env getter:
+             (λ (calling-state casual-params)
+               (add-var-bindings
+                (append (prepend 'this formal-params) (list name))
+                (append
+                 (map (λ (param)
+                        (M_value param calling-state return except compile-type runtime-type this))
+                      (prepend runtime-type casual-params))
+                 (list self))
+                ;; (get-latest-scope (reverse calling-state)) gets the global
+                ;; scope (which contains all classes that should be defined,
+                ;; including the class that this function itself is defined in)
+                (add-state-layer (add-state-layer state (get-latest-scope (reverse calling-state))))))
+             compile-type)])
     (M_state-decl (list name self) state return except compile-type runtime-type this #f)))
 
 ;; `M_state-func-invoke` handles function invocations
@@ -367,11 +367,11 @@
      (add-state-layer (optional-apply (λ (extends) (get-field-defaults (get-var-value extends state)))
                                       extends)
                       (map get-operands ; List of list of bindings for compat with our state functions
-                           (filter (λ (stmt) (eq? (get-operand-1 stmt) 'var)) body)))
+                           (filter (λ (stmt) (eq? (get-expr-symbol stmt) 'var)) body)))
      (M_state-stmt-list
       (filter
        (λ (stmt) ; Extract all the functions (and create the function closures via get-initial-state)
-         (eq? (get-expr-symbol stmt) 'static-function))
+         (member (get-expr-symbol stmt) '(static-function function)))
        body)
       (if (null? extends)
           (get-empty-state)
@@ -399,7 +399,7 @@
                     (optional-apply get-operand-1 (get-operand-2 stmt))
                     (get-operand-3 stmt)
                     state)]
-    ['static-function
+    [(or 'static-function 'function)
      (M_state-function ;;
       (get-operand-1 stmt)
       state
@@ -695,7 +695,6 @@
                       (get-evaled-binding binding state return except compile-type runtime-type this))
                     class-fields-layer))
              (get-field-defaults (get-var-value name state)))))
-
 ;; We use `match-λ` to associate certain symbols with corresponding procedures
 ;; (as a dispatch table) for M_num-ops, M_bool-ops, and M_comp-ops.
 ;;
@@ -750,6 +749,20 @@
 
     [(eq? (get-expr-symbol expr) 'new)
      (M_value-instance (get-operand-1 expr) state return except compile-type runtime-type this)]
+
+    ;; Dot operator
+    ;; It shows up like (dot a x), where 'dot is on the left
+    ;; We know that if we are asking for an M_value of a field because we only
+    ;; use the dot operator in funcall for methods, since functions are not
+    ;; first class in this language
+    [(eq? (get-expr-symbol expr) 'dot)
+     ;; Get the instance, then get the field within the instance
+     (get-var-value
+      (get-operand-2 expr)
+      (get-fields (M_value (get-operand-1 expr) state return except compile-type runtime-type this))
+      #t
+      compile-type
+      this)]
 
     ;; Algebraic operations
     [(member (get-expr-symbol expr) '(+ - * / %))
