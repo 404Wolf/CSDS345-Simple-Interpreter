@@ -1,4 +1,5 @@
 class A {
+static function main() {
     var x = 0;
 var y = 0;
 
@@ -10,7 +11,6 @@ function sety(b) {
   y = b;
 }
 
-static function main() {
   setx(5);
   sety(7);
   return x * y;

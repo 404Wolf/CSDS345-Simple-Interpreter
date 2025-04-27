@@ -1,4 +1,5 @@
 class A {
+static function main() {
     var count = 0;
 
 function f(a,b) {
@@ -7,7 +8,6 @@ function f(a,b) {
   return a;
 }
 
-static function main() {
   f(1, 2);
   f(3, 4);
   return count;

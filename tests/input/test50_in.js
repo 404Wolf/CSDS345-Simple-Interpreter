@@ -1,4 +1,5 @@
 class A {
+static function main() {
     function min(x, y, z) {
   if (x < y) {
     if (x < z)
@@ -19,7 +20,6 @@ var z = 30;
 var min1 = min(x,y,z);
 var min2 = min(z,y,x);
 
-static function main() {
   var min3 = min(y,z,x);
 
   if (min1 == min3)
