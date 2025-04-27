@@ -226,16 +226,51 @@
 ;; If the <binding> is a single-element list (not a pair), this errors (that is
 ;; the purpose of add-var-binding)
 ;; `set-var-binding` updates an existing binding (var, value) in `state`.
-(define (set-var-binding! binding state)
-  (cond
-    ;; we've recursed through all scopes without finding the variable
-    [(null? state) (error (string-append "variable not declared: " (~a (get-binding-name binding))))]
-    [(var-declared? (get-binding-name binding) (list (get-latest-scope state)))
-     (begin
-       (set-box! (cadar (get-pair-where-car-eq (get-latest-scope state) (get-binding-name binding)))
-                 (get-binding-unevaluated-value binding))
-       state)]
-    [else (cons (get-latest-scope state) (set-var-binding! binding (get-earlier-scopes state)))]))
+;;
+;; If setting a binding for a *field* of a class instance:
+;; - If `this` is passed, then allow fallthrough where we first try to set a
+;;   local variable in the state but if we can't find it in the state then we set
+;;   that variable in the class instance closure under the respective field
+;; - If `instance-name` is passed, then we do not consider the local state and
+;;   directly set the field value in the closure associated with with
+;;   instance-name.
+;; - If `instance-name` and `this` are passed we will ONLY consider the instance.
+(define (set-var-binding! binding state (compile-type null) (this null) (instance-name null))
+  (if (null? instance-name)
+      (cond
+        ;; we've recursed through all scopes without finding the variable
+        [(null? state)
+         (if (not (null? this))
+             ;; If we reach the base case where we could not find the variable
+             ;; binding in any of the the scope layers then we can check to see if
+             ;; it is in a visible region of the instance closure and if it is then
+             ;; recurse and set it there. We omit `this` and `instance` in the
+             ;; recursive call to prevent infinite recursion.
+             (begin
+               (set-var-binding! binding (get-active-state state compile-type #t this) compile-type)
+               state)
+             (error (string-append "variable not declared: " (~a (get-binding-name binding)))))]
+        [(var-declared? (get-binding-name binding) (list (get-latest-scope state)))
+         (begin
+           (set-box! (cadar (get-pair-where-car-eq (get-latest-scope state)
+                                                   (get-binding-name binding)))
+                     (get-binding-unevaluated-value binding))
+           state)]
+        [else (cons (get-latest-scope state) (set-var-binding! binding (get-earlier-scopes state)))])
+      ;; There is no restricting of what we have access to when we are directly
+      ;; setting a property of instance, because there is no way to cast in our
+      ;; language (it is impossible to narrow other than function calls, and
+      ;; this is a field assignment)
+      (cond
+        [;; If using this.foo we DO want to restrict to the compile time type
+         (eq? compile-type 'this)
+         (begin
+           (set-var-binding! binding (get-active-state state compile-type #t this) compile-type)
+           state)]
+        [else
+         (begin
+           (set-var-binding! (get-fields (get-var-value instance-name state)))
+           state)])))
 
 ;; `add-var-bindings` zips and adds many bindings to the state.
 (define (add-var-bindings keys values state (error-message "keys.length != values.length"))
@@ -375,7 +410,7 @@
        body)
       (if (null? extends)
           (get-empty-state)
-          (get-functions (get-var-value extends state) extends))
+          (get-functions (get-var-value extends state))) ;; TODO what was extends doing here
       (λ (_value _state) (illegal-return-exception))
       break-exception
       continue-exception
@@ -412,8 +447,8 @@
       this)]
     ['funcall
      ;; checking for dot operator that looks like (funcall (dot instance method))
-     (if (list? (get-operand-1 stmt))
-         (call/cc (λ (return)
+     (call/cc (λ (return)
+                (if (list? (get-operand-1 stmt))
                     (M_state-func-invoke (get-operand-2 (get-operand-1 stmt))
                                          state
                                          (get-casual-params stmt)
@@ -421,8 +456,7 @@
                                          except
                                          compile-type
                                          runtime-type
-                                         (get-operand-1 (get-operand-1 stmt)))))
-         (call/cc (λ (return)
+                                         (get-var-value (get-operand-1 (get-operand-1 stmt)) state))
                     (M_state-func-invoke (get-operand-1 stmt)
                                          state
                                          (get-casual-params stmt)
@@ -591,9 +625,12 @@
 ;;  1. If the var is declared, evaluate the expression and return the new
 ;;     state.
 ;;  2. Otherwise, error about an undeclared variable.
+
+;; (define (set-var-binding! binding state (compile-type null) (this null) (instance-name null))
 (define (M_state-assign binding state return except compile-type runtime-type this)
-  (if (var-declared? (get-binding-name binding) state)
-      (set-var-binding! (list (get-binding-name binding)
+  (if (list? binding)
+      ;; The case where we have (dot (bar buzz))
+      (set-var-binding! (list (get-operand-2 (get-binding-name binding))
                               (M_value (get-binding-unevaluated-value binding)
                                        state
                                        return
@@ -601,8 +638,23 @@
                                        compile-type
                                        runtime-type
                                        this))
-                        state)
-      (var-used-before-dec-error (get-binding-name binding))))
+                        state
+                        compile-type
+                        this
+                        (get-operand-1 (get-binding-name binding)))
+      (if (var-declared? (get-binding-name binding) state)
+          (set-var-binding! (list (get-binding-name binding)
+                                  (M_value (get-binding-unevaluated-value binding)
+                                           state
+                                           return
+                                           except
+                                           compile-type
+                                           runtime-type
+                                           this))
+                            state
+                            compile-type
+                            this)
+          (var-used-before-dec-error (get-binding-name binding)))))
 
 ;; `M_state-while` handles while loops.
 ;;
@@ -814,15 +866,25 @@
     ;; to allow for our two-argument ! (negation).
     ;; Functions
     [(eq? (get-expr-symbol expr) 'funcall)
+     ;; checking for dot operator that looks like (funcall (dot instance method))
      (call/cc (λ (return)
-                (M_state-func-invoke (get-operand-1 expr)
-                                     state
-                                     (get-casual-params expr)
-                                     (λ (result _state) (return result))
-                                     except
-                                     null
-                                     null
-                                     null)))]))
+                (if (list? (get-operand-1 expr))
+                    (M_state-func-invoke (get-operand-2 (get-operand-1 expr))
+                                         state
+                                         (get-casual-params expr)
+                                         (λ (result _state) (return result))
+                                         except
+                                         compile-type
+                                         runtime-type
+                                         (get-operand-1 (get-operand-1 expr)))
+                    (M_state-func-invoke (get-operand-1 expr)
+                                         state
+                                         (get-casual-params expr)
+                                         (λ (result _state) (return result))
+                                         except
+                                         compile-type
+                                         runtime-type
+                                         this))))]))
 
 ;; `output-remap` sanitizes the output.
 (define (output-remap output)
