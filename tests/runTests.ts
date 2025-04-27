@@ -1,24 +1,31 @@
-import { join } from "jsr:@std/path";
+import { basename, join } from "jsr:@std/path";
 import { parseArgs } from "jsr:@std/cli/parse-args";
 import { green, red } from "jsr:@std/fmt/colors";
 
+const RACKET_FLAGS = ["-d", "-l", "errortrace", "-t"];
 const DEFAULT_CLASS = "A";
 const SRC_PATH = join("src", "interpreter.rkt");
+const TEST_DIR_CONTENTS = await Array.fromAsync(
+  Deno.readDir(join("tests", "input")),
+);
 
-// Parse arguments
 const parsedArgs = parseArgs(Deno.args, {
   boolean: ["concurrent"],
   alias: { concurrent: "c" },
 });
 
 const concurrentMode = parsedArgs.concurrent || false;
-const [startIndex, endIndex] = parsedArgs._.map(Number);
+let [startIndex, endIndex] = parsedArgs._.map(Number);
 
-if (isNaN(startIndex) || isNaN(endIndex) || startIndex > endIndex) {
+if (isNaN(startIndex) || startIndex > endIndex) {
   console.error(
     "Usage: deno run script.ts [--concurrent] <startIndex> <endIndex>",
   );
   Deno.exit(1);
+}
+
+if (startIndex && !endIndex) {
+  endIndex = startIndex;
 }
 
 let passed = 0;
@@ -28,15 +35,17 @@ async function executeTest(inputPath: string, expectedPath: string) {
   const expectedOutput = await Deno.readTextFile(expectedPath);
   const expectedError = expectedOutput.trim() === "error";
 
-  // Extract the file basename
-  const filename = inputPath.split("/").pop() || "";
-
-  // Check if there's a class name after "_in"
+  const filename = basename(inputPath);
   const suffixMatch = filename.match(/_in_([^.]+)\.js$/);
   const className = suffixMatch ? suffixMatch[1] : DEFAULT_CLASS;
 
   const child = new Deno.Command("racket", {
-    args: [SRC_PATH, join("tests", "input", filename), className],
+    args: [
+      ...RACKET_FLAGS,
+      SRC_PATH,
+      join("tests", "input", filename),
+      className,
+    ],
     stdout: "piped",
     stderr: "piped",
   }).spawn();
@@ -63,7 +72,11 @@ function getTestResultMessage(
 
 async function runTest(num: number) {
   const numStr = num.toString().padStart(2, "0");
-  const inputPath = join("tests", "input", `test${numStr}_in.js`);
+
+  const inputPath = TEST_DIR_CONTENTS
+    .find((file) => file.name.startsWith(`test${numStr}_in`))
+    ?.name!;
+
   const expectedPath = join("tests", "input", `test${numStr}_out`);
 
   const { output, errorOutput, code, expectedOutput, expectedError } =
