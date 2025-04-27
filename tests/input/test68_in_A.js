@@ -1,4 +1,5 @@
 class A {
+
   var x = 100;
 
   function add(x) {
@@ -6,13 +7,8 @@ class A {
   }
 
   static function main() {
-    var b = new B();
-    b.f = 55;
-    return b;
+    var a = new A();
+    return a.add(25);
   }
 }
 
-
-class B {
-  var f = 5;
-}

@@ -201,7 +201,8 @@
                         ;; filter based on whether they are declared in the compile
                         ;; time type (we only want the ones that are declared in
                         ;; the compile time type since we are restricting access)
-                        (flatten-state (get-var-value (get-runtime-type this) state))))])
+                        (flatten-state ;;
+                         (get-functions (get-var-value (get-runtime-type this) state)))))])
     (if is-field
         (locate-accessible-field-region (get-fields this) (get-runtime-type this))
         accessible-method-region)))
@@ -269,7 +270,7 @@
            state)]
         [else
          (begin
-           (set-var-binding! (get-fields (get-var-value instance-name state)))
+           (set-var-binding! binding (get-fields (get-var-value instance-name state)))
            state)])))
 
 ;; `add-var-bindings` zips and adds many bindings to the state.
@@ -353,16 +354,16 @@
   (letrec (;; to define the function with access to itself
            [self
             (list
-             (prepend 'this formal-params)
+             (prepend 'this formal-params) ; formal params
              body
              ;; Get env getter:
-             (λ (calling-state casual-params)
+             (λ (calling-state casual-params this)
                (add-var-bindings
                 (append (prepend 'this formal-params) (list name))
                 (append
                  (map (λ (param)
                         (M_value param calling-state return except compile-type runtime-type this))
-                      (prepend runtime-type casual-params))
+                      (prepend this casual-params))
                  (list self))
                 ;; (get-latest-scope (reverse calling-state)) gets the global
                 ;; scope (which contains all classes that should be defined,
@@ -383,7 +384,7 @@
   (let ([function (get-var-value function-name state #f compile-type this)])
     (restore-state
      (M_state-block (get-function-body function)
-                    ((get-env-getter function) state casual-params)
+                    ((get-env-getter function) state casual-params this)
                     (λ (to-return new-state) (return to-return (restore-state new-state state)))
                     break-exception
                     continue-exception
@@ -628,7 +629,7 @@
 
 ;; (define (set-var-binding! binding state (compile-type null) (this null) (instance-name null))
 (define (M_state-assign binding state return except compile-type runtime-type this)
-  (if (list? binding)
+  (if (list? (get-binding-name binding))
       ;; The case where we have (dot (bar buzz))
       (set-var-binding! (list (get-operand-2 (get-binding-name binding))
                               (M_value (get-binding-unevaluated-value binding)
@@ -796,10 +797,7 @@
     [(number? expr) expr]
 
     ;; Symbols (variables)
-    [(symbol? expr)
-     (if (var-declared? expr state)
-         (get-var-value expr state)
-         (var-used-before-dec-error expr))]
+    [(symbol? expr) (get-var-value expr state #t compile-type this)]
 
     [(eq? (get-expr-symbol expr) 'new)
      (M_value-instance (get-operand-1 expr) state return except compile-type runtime-type this)]
