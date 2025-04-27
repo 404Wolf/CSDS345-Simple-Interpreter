@@ -411,15 +411,17 @@
       runtime-type
       this)]
     ['funcall
-     (if (eq? (get-expr-symbol (get-operand-1 stmt) 'dot))
-         (M_state-func-invoke (get-operand-2 (get-operand-1 stmt))
-                              state
-                              (get-casual-params stmt)
-                              (λ (_result state) (return state))
-                              except
-                              compile-type
-                              runtime-type
-                              (get-operand-1 (get-operand-1 stmt)))
+     ;; checking for dot operator that looks like (funcall (dot instance method))
+     (if (list? (get-operand-1 stmt))
+         (call/cc (λ (return)
+                    (M_state-func-invoke (get-operand-2 (get-operand-1 stmt))
+                                         state
+                                         (get-casual-params stmt)
+                                         (λ (_result state) (return state))
+                                         except
+                                         compile-type
+                                         runtime-type
+                                         (get-operand-1 (get-operand-1 stmt)))))
          (call/cc (λ (return)
                     (M_state-func-invoke (get-operand-1 stmt)
                                          state
@@ -811,7 +813,7 @@
     ;; arguments, so we return null if we are given null (and stop recursing)
     ;; to allow for our two-argument ! (negation).
     ;; Functions
-    [(eq? (get-expr-symbol expr) 'functionall)
+    [(eq? (get-expr-symbol expr) 'funcall)
      (call/cc (λ (return)
                 (M_state-func-invoke (get-operand-1 expr)
                                      state
