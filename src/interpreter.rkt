@@ -383,24 +383,25 @@
          body
          ;; Get env getter:
          (λ (calling-state casual-params current-this compile-type runtime-type)
-           (add-var-bindings
-            (append (prepend 'this (prepend 'super formal-params)) (list name))
+           (add-var-bindings ;; takes keys, values, state
+            (append (list 'this 'super) formal-params (list name))
             (append
              (map
               (λ (param)
                 (M_value param calling-state return except compile-type runtime-type current-this))
-              (prepend
-               current-this
-               (prepend (if (null? (get-superclass (get-var-value compile-type calling-state)))
-                            null
-                            (get-var-value (get-superclass (get-var-value compile-type calling-state))
-                                           calling-state))
-                        casual-params)))
+              (let ([super-value
+                     (if (null? (get-superclass (get-var-value compile-type calling-state)))
+                         null
+
+                         ;; We need to have access to the global state
+                         (get-var-value (get-superclass (get-var-value compile-type calling-state))
+                                        calling-state))])
+                (prepend current-this (prepend super-value casual-params))))
              (list self))
             ;; (get-latest-scope (reverse calling-state)) gets the global
             ;; scope (which contains all classes that should be defined,
             ;; including the class that this function itself is defined in)
-            (add-state-layer (add-state-layer state (get-latest-scope (reverse calling-state))))))
+            (add-state-layer (add-state-layer calling-state (get-latest-scope (reverse state))))))
          compile-type)])
     (M_state-decl (list name self) state return except compile-type runtime-type decl-this #f)))
 
