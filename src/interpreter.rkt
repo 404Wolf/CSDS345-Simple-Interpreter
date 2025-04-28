@@ -389,15 +389,13 @@
              (map
               (λ (param)
                 (M_value param calling-state return except compile-type runtime-type current-this))
-              (prepend current-this
-                       (prepend (get-var-value
-                                 (begin
-                                   (printf
-                                   (~a (get-superclass (get-var-value compile-type calling-state))))
-
-                                       (get-superclass (get-var-value compile-type calling-state)))
-                                 calling-state)
-                                casual-params)))
+              (prepend
+               current-this
+               (prepend (if (null? (get-superclass (get-var-value compile-type calling-state)))
+                            null
+                            (get-var-value (get-superclass (get-var-value compile-type calling-state))
+                                           calling-state))
+                        casual-params)))
              (list self))
             ;; (get-latest-scope (reverse calling-state)) gets the global
             ;; scope (which contains all classes that should be defined,
@@ -429,7 +427,13 @@
                     #f)
      state)))
 
+;; (
+;;   <field-defaults>,  // Default field names
+;;   <functions>,       // Class methods, accessed with get-functions
+;;   <superclass>       // Parent class name or null
+;; )
 (define (M_state-class name extends body state)
+  ;;
   (add-var-binding
    (list
     name
@@ -455,10 +459,9 @@
       null
       null
       null)
-    (begin (printf (~a extends)) extends)
-
-     ; Extends type
-     ))
+     extends)
+    ; Extends type
+    )
    state))
 
 ;; `M_state-stmt` matches on the type of statement (declaration, assignment,
@@ -970,4 +973,12 @@
                 #:args (file-path [class-name ""])
                 (interpret file-path (string->symbol class-name))))
 
+(define-syntax printing
+  (syntax-rules ()
+    [(_ expr)
+     (let ([result expr])
+       (printf "~a = ~v\n" 'expr result)
+       result)]))
+
 (run-interpreter)
+;; (interpret "tests/test_input.js" "A")
