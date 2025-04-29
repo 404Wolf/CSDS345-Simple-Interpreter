@@ -1,4 +1,5 @@
-function main() {
+class A {
+    static function main() {
   var result;
   var base;
 
@@ -25,3 +26,4 @@ function main() {
   getpow(6);
   return result;
 }
+  }

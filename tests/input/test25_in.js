@@ -1,4 +1,5 @@
-function main() {
+class A {
+    static function main() {
   var x = 10;
   var y = 4;
   if (x < y) {
@@ -8,3 +9,5 @@ function main() {
   }
   return min;
 }
+
+  }

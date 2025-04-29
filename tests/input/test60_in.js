@@ -1,4 +1,5 @@
-function f(n) {
+class A {
+    function f(n) {
   var a;
   var b;
   var c;
@@ -20,9 +21,10 @@ function f(n) {
   return a + b + c;
 }
 
-function main() {
+static function main() {
   var x = f(10);
   var y = f(20);
 
   return x - y;
 }
+  }

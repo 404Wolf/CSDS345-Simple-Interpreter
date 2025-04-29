@@ -1,11 +1,14 @@
-var x = 1;
-var y = 10;
-var r = 0;
+class A {
+    static function main() {
+      var x = 1;
+      var y = 10;
+      var r = 0;
 
-function main() {
-  while (x < y) {
-     r = r + x;
-     x = x + 1;
-  }
-  return r;
+      while (x < y) {
+         r = r + x;
+         x = x + 1;
+      }
+
+      return r;
+    }
 }

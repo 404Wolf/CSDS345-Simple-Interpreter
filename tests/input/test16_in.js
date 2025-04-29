@@ -1,4 +1,5 @@
-function main() {
+class A {
+    static function main() {
   var x = 10;
   var y = 20;
   if (x < y && (x % 2) == 0) {
@@ -7,3 +8,5 @@ function main() {
     return 200;
   }
 }
+
+  }

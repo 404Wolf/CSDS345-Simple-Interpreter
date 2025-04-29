@@ -1,4 +1,5 @@
-function main() {
+class A {
+    static function main() {
   var x = 0;
   while (x < 10) {
     var y = 0;
@@ -10,3 +11,5 @@ function main() {
     x = y;
   }
 }
+
+  }
